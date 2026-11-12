@@ -12,7 +12,7 @@ export type Lam      = { ty: Term, $: "Lam",       name: string, fn: F}
 export type SYM      = { ty: Term, $: "SYM",       name?: string, live: boolean }
 export type Term = Uni | Arrow | ADT | adt | match | APP | Lam | SYM
 
-export let Hole = {} as Term
+export let Hole = {$hole: 1} as unknown as Term
 export const Type : Uni = {$: "Uni", Quant: 0, ty: Hole}
 Type.ty = Type
 const Data : Uni = {$: "Uni", Quant: 1, ty: Type}
@@ -32,7 +32,7 @@ function zip<T,S,U>(ts: T[], s: S[], f: (t: T, s: S, i: number)=>U): U[] {
 
 let fillSign = ( s: Sign): SYM[] => {
   let vs = s.slots.map(slot => ({ $: "SYM", name: slot.name, live: slot.live, ty: Hole } as SYM))
-  zip(s.f(...vs), vs, (ty, v)=> v.ty = ty)
+  for (let i = 0; i < vs.length; i++) vs[i].ty = s.f(...vs)[i]
   return vs
 }
 
@@ -186,20 +186,26 @@ function check(t:Term){
     }
 
     if (t == rfl) return used
-    if (!t.$) raise(`Unexpected term with tag ${t.$}: ${fmt(t)}`)
+    if (!t.$) raise(`Unexpected term with tag ${t}: ${fmt(t)}`)
     function searchStack(c: CallStack, t: Term){ return c.find(x=>x.f == t) }
 
     let type = t.ty
-    if (t.ty == Hole) {
+    if (type == Hole) {
       if (!ty) raise(`Cannot infer type for term ${fmt(t)}`)
       type = ty
     }
     if (checked.has(t)) return used
     type = run(type)
 
+
+    if (type.ty == Hole) {
+      console.log(fmt(t))
+      console.log(fmt(type))
+      raise(`Cannot infer type for term ${fmt(t)}`)
+    }
+
     if (t.$ == "Uni"){
       if (asTag(t.ty, "Uni").Quant != 0) raise(`Expected Uni Type, got ${fmt(t.ty)}`)
-
     } else if (t.$ == "match"){
       let arg = asTag(t.scr, "SYM")
       let T = asTag(arg.ty, "ADT")
@@ -269,16 +275,10 @@ function adt(ty: Term, tag: number, ...srcs: Term[]): adt{
 
 function $(fn: Term, ...args: Term[]): APP{
   let ty = fn.ty == Hole ? Hole : asTag(fn.ty, "Arrow").COD.f(...args)
-
+  if (ty == Hole) console.warn("! Hole type of app: ", fn)
   return { $: "APP", ty, fn, args }
 }
 
-function match(scr: Term, srcs: F[]): match{
-
-  let ty: match = {$: "match", ty: Type, scr, srcs: srcs.map((f,i)=>({...f, f: (...vs:Term[]) => f.f(...vs).ty} as F))}
-  let res : match = { $: "match", ty, scr, srcs }
-  return res
-}
 
 type synt = string | synt []
 
@@ -379,7 +379,6 @@ function compile(s: string) : Term{
   function goTerm(tr: synt, ctx: Ctx, ty?: string): string{
 
     if (typeof tr == "string") {
-
       if (!ctx.includes(tr)) {
         if (book.has(tr)) return `book.get("${tr}")`
         raise(`unbound identifier: ${tr}`)}
@@ -388,11 +387,12 @@ function compile(s: string) : Term{
 
   
     if (Array.isArray(tr)) {
+
       if (tr[0] == "match") {
         return `({
           $: "match",
           scr: ${goTerm(tr[1], ctx)},
-          ty: Hole,
+          ty: ${ ty ?? "Hole"},
           srcs: [${splitList(tr, "|").slice(1).map(arm => {
             let [pat, expr] = splitList(arm, "=>")
             if (typeof pat == "string") pat = [pat]
@@ -464,6 +464,7 @@ function compile(s: string) : Term{
       `  name: "${name}",`,
       `  ty: {`,
       `    $: "Arrow",`,
+      `    ty: book.get("Type"),`,
       `    DOM: ${mkSign(args)},`,
       `    COD: { length: ${args.length}, f: (${args.map(a=>a.name)})=> (${R}) } },`,
       `  fn: { length: ${args.length}, f: (${args.map(a=>a.name)})=> (${bod}) }`,
@@ -494,7 +495,7 @@ function compile(s: string) : Term{
       code = `({...${goTerm(tr.slice(4), ctx, ty)}, ty: ${ty} })`
     }else raise(`unexpected syntactic form: ${JSON.stringify(tr)}`)
 
-    let Ctx = { match, book, Hole, $, obj, }
+    let Ctx = { book, Hole, $, obj, }
     Function(...Object.keys(Ctx),"check", `Object.assign(obj, ${code})`)(...Object.values(Ctx), check)
     book.set(name,obj)
     check(obj)
@@ -502,7 +503,7 @@ function compile(s: string) : Term{
     return obj
   } catch(e) {
     if (book.get(name) == obj) book.delete(name)
-    raise(`Error during compilation of ${name}: ${e}\nCode that caused the error: ${code}`)
+    raise(`Error during compilation of ${name}: ${e}\nCode that caused the error: ${s}\n ${code}`)
   }
 }
 
@@ -556,16 +557,14 @@ compile("(TID : Data = Nat)")
 compile("(DID : Type = Type)")
 compile("(_uu : aro = pred )")
 
-compile( `( _oneof_nat (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#0 n) ) ` )
-decline( `( _bad_oneof_bool (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#1 n) ) ` )
-
-compile( `( _typeid (T: Type) :Type = T)`)
-compile( `( _dataid (T: Data) :Data = T)`)
-decline( `( _typeup (T: Type) :Data = T)`)
-compile( `( _dataup (T: Data) :Type = T)`)
-
-compile( `( _intersection (t: Data, x: t) : (|(a: t, b: t)) = (#0 x x))`)
-decline( `( _notaffine (t: Type, x: t) : (|(a: t, b: t)) = (#0 x x))`)
+compile(`( _oneof_nat (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#0 n) ) ` )
+decline(`( _bad_oneof_bool (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#1 n) ) ` )
+compile(`( _typeid (T: Type) :Type = T)`)
+compile(`( _dataid (T: Data) :Data = T)`)
+decline(`( _typeup (T: Type) :Data = T)`)
+compile(`( _dataup (T: Data) :Type = T)`)
+compile(`( _intersection (t: Data, x: t) : (|(a: t, b: t)) = (#0 x x))`)
+decline(`( _notaffine (t: Type, x: t) : (|(a: t, b: t)) = (#0 x x))`)
 
 
 /**
@@ -712,11 +711,11 @@ compile(`( add.comm (n: Nat, m: Nat) : (== (+ n m) (+ m n)) =
   match n
     | => (add.0.symm m)
     | p => (EQ.tran Nat
-        (S (+ p m))
-        (S (+ m p))
-        (+ m (S p))
-        (congruence Nat Nat (+ p m) (+ m p) S (add.comm p m))
-        (add.succ m p))
+      (S (+ p m))
+      (S (+ m p))
+      (+ m (S p))
+      (congruence Nat Nat (+ p m) (+ m p) S (add.comm p m))
+      (add.succ m p))
 )`)
 
 
@@ -788,4 +787,5 @@ decline(`(false_arrow : Empty = (x: NULL) -> NULL)`)
 decline(`(false_adt : Empty = |)`)
 
 decline(`(boom (n: Nat) : Empty = sorry)`)
-// decline(`(badID (n:Null): Null = n)`)
+/** for now we accept weird things like x: Null as long as there is no inhabitant */
+// decline(`(badID (n: Null) : Null = n)`)
