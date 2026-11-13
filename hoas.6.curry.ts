@@ -1,3 +1,4 @@
+// (Error as any).stackTraceLimit = Infinity
 export type Quant = 0 | 1
 export type F        = {names: string[], f: (...t: Term[]) => Term}
 export type Sign     = {name: string, live: boolean, f: (...t: Term[]) => Term }[]
@@ -79,6 +80,7 @@ function run(t:Term): Term{
 
 function checkEQ(a: Term, b: Term){
   function checkEqSign(a:Sign, b:Sign){
+    if(a.length != b.length) raise(`Structural mismatch: ${a.length} vs ${b.length}`)
     let vs = fillSign(a);
     vs.map((v, i) => {
       if (v.live != b[i].live) raise(`Live missmatch: ${v.name} vs ${b[i].name}`)
@@ -160,7 +162,7 @@ function check(t:Term){
 
     if (t == rfl) return used
     if (!t.$) raise(`Unexpected term with tag ${t}: ${fmt(t)}`)
-    function searchStack(c: CallStack, t: Term){ return c.find(x=>x.f == t) }
+    // function searchStack(c: CallStack, t: Term){ return c.find(x=>x.f == t) }
 
     if (checked.has(t)) return used
 
@@ -183,7 +185,6 @@ function check(t:Term){
       })
       Object.assign(arg, old)
       used = newuses
-
     } else if (t.$ == "SYM"){
       if (live && t.live) { if (type.ty != Data && used.includes(t)) raise(`Symbol ${fmt(t)} already used: ${fmt(t)}`) }
       else{ if (live) raise(`Symbol ${fmt(t)} is not live`) }
@@ -195,12 +196,12 @@ function check(t:Term){
       return checkSig(t.srcs, vari, live, cs, used)
 
     } else if (t.$ == "Lam"){
-      if (searchStack(cs, t)) raise(`Non well-founded lambda detected`)
+      if (cs.find(x=>x.f == t)) raise(`Non well-founded lambda detected`)
       let {args, ret} = fillArrow(asTag(t.ty, "Arrow"))
       return go(t.fn.f(...args), [...cs, { f: t, args }], used, ret, live).filter(x=> !args.includes(x))
 
     } else if (t.$ == "APP"){
-      let REC = searchStack(cs, t.fn)
+      let REC = cs.find(x=>x.f == t.fn)
       let aro = asTag(t.fn.ty, "Arrow")
       used = checkSig(t.args, aro.s.slice(0, -1), live, cs, used)
       checkEQ(type, aro.s[aro.s.length - 1].f(...t.args))
@@ -215,15 +216,17 @@ function check(t:Term){
       else return go(t.fn, cs, used, aro, live)
 
     } else if (t.$ == "Arrow"){
-      asTag(type, "Uni")
-      if (type == Data) raise(`Cannot construct Arrow of type Data`)
+      if (asTag(type, "Uni").Quant == 1) raise(`Cannot construct Arrow of a universally quantified type`)
+      if (cs.some(x=>x.f == t)) return used
+      cs = [...cs, {f: t, args: []}]
+      fillSign(t.s).forEach(x=> go(x.ty, cs, used, Type, false))
 
     } else if (t.$ == "ADT"){
-      asTag(type, "Uni")
-      if (type == Data)
-        for(let v of t.variants)
-          for (let s of fillSign(v))
-            if (s.ty.ty != Data) raise(`Cannot construct Data from non-Data type: ${fmt(s.ty)}`)
+      if (cs.some(x=>x.f == t)) return used
+      let un = asTag(type, "Uni")
+      cs = [...cs, {f: t, args: []}]
+      if (un.Quant == 1) for(let v of t.variants)
+        for (let s of fillSign(v)) go(s.ty, cs, used, Data, true)
     }
     return used
 
@@ -390,7 +393,13 @@ function compile(s: string) : Term{
   let Ctx = { book: (s:string)=>book.get(s), $, obj, Type }
   Function(...Object.keys(Ctx),"check", `Object.assign(obj, ${code})`)(...Object.values(Ctx), check)
   book.set(name,obj)
-  check(obj)
+
+  try{
+    check(obj)
+  }catch(e){
+    book.delete(name)
+    throw e
+  }
   names.set(obj, name)
   if (!name.startsWith("_")) console.info(`✓${name} ${fmt(obj, true)}`)
   return obj
@@ -663,10 +672,14 @@ compile(`( mkDead (-T : Type, -x: T) : (DeadBox T) = (#0 x))`)
 decline(`( castBox (-T: Type, b: (DeadBox T)) : (LiveBox T) = b )`)
 decline(`( fromrfl : Empty = rfl )`)
 decline(`( fromrfl (x:Nat): Empty = rfl )`)
-decline(`(false_arrow : Empty = (x: NULL) -> NULL)`)
-decline(`(false_adt : Empty = |)`)
+decline(`(_false_arrow : Empty = (x: NULL) -> NULL)`)
+decline(`(_false_adt : Empty = |)`)
 
-decline(`(boom (n: Nat) : Empty = sorry)`)
-compile(`(badID (n: Null) : Null = n)`)
+decline(`(_boom (n: Nat) : Empty = sorry)`)
+compile(`(_badID (n: Null) : Null = n)`)
 
+compile(`(_castNull (x: NULL): (| ()) = x)`)
+decline(`(_castBad (x: NULL): (| (x:Nat)) = x)`)
+decline(`(_badTF (x: NULL) : Data = ((x:NULL) -> NULL))`)
+decline(`(D : Data = | (f: (((z: NULL): Data => ((x: D) -> Empty)) Null)))`)
 
