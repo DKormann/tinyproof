@@ -788,4 +788,6 @@ decline(`(false_adt : Empty = |)`)
 
 decline(`(boom (n: Nat) : Empty = sorry)`)
 /** for now we accept weird things like x: Null as long as there is no inhabitant */
-// decline(`(badID (n: Null) : Null = n)`)
+compile(`(badID (n: Null) : Null = n)`)
+
+
