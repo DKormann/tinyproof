@@ -1,4 +1,4 @@
-// (Error as any).stackTraceLimit = Infinity
+(Error as any).stackTraceLimit = Infinity
 export type Quant = 0 | 1
 export type F        = {names: string[], f: (...t: Term[]) => Term}
 export type Sign     = {name: string, live: boolean, f: (...t: Term[]) => Term }[]
@@ -153,6 +153,10 @@ function check(t:Term){
 
   function go(t:Term, cs: CallStack, used: SYM[], ty:Term | undefined, live : boolean) : SYM[]{
 
+    function raise(msg: string): never{
+      throw new Error(msg)// + "\nCall stack:\n" + cs.map(x=>fmt(x.f)).join("\n"))
+    }
+
     if (t == sorry) raise(`Sorry: ${fmt(ty)}`)
 
     if (ty && t.ty) {
@@ -170,7 +174,7 @@ function check(t:Term){
 
     go(type, cs, used, Type, false)
 
-    type = run(type)
+    // type = run(type)
     
     if (!type.ty) raise(`Cannot infer type for term ${fmt(t)}`)
 
@@ -627,53 +631,38 @@ compile(`( add.assoc (n: Nat, m: Nat, k: Nat) : ( == (+ n (+ m k)) (+ (+ n m) k)
 )`)
 
 compile(`(mul (n: Nat, m: Nat) : Nat =
-  match m | => Zero | p => (+ n (mul n p))
+  match n | => Zero | p => (+ m (mul p m))
 )`)
 
-compile(`(mul.0 (m: Nat) : (== (mul m Zero) Zero) = 
-  match m | => (rfl Nat Zero) | p => (mul.0 p)
-)`)
-
-compile(`(mul.1 (n:Nat) : (== (mul n n1) n) = (add.0 n) )`)
-
-compile(`(mul.succ (n: Nat, m: Nat) : (== (mul n (S m)) (+ n (mul n m))) =
-  (rfl Nat (+ n (mul n m)))
+compile(`(mul.0 (m: Nat) : (== n0 (mul m n0)) = 
+  match m
+    | => (rfl Nat n0)
+    | p => (mul.0 p)
   )`)
 
-compile(`(add.swap (a: Nat, b: Nat, c: Nat) : (== (+ a (+ b c)) (+ b (+ a c))) =
-  (EQ.tran Nat (+ a (+ b c)) (+ (+ a b) c) (+ b (+ a c))
-    (add.assoc a b c)
-    (EQ.tran Nat (+ (+ a b) c) (+ (+ b a) c) (+ b (+ a c))
-      (congruence Nat Nat (+ a b) (+ b a) ((x: Nat): Nat => (+ x c)) (add.comm a b))
-      (EQ.symm Nat (+ b (+ a c)) (+ (+ b a) c) (add.assoc b a c))))
-)`)
+compile(`(congn (a:Nat, b: Nat, f: ((x: Nat) -> Nat), e: (== a b) ) : (== (f a) (f b)) = (congruence Nat Nat a b f e))`)
 
-compile(`(mul.zero.left (m: Nat) : (== (mul Zero m) Zero) =
-  match m | => (rfl Nat Zero) | p => (mul.zero.left p)
-)`)
-
-compile(`(mul.left.succ (n: Nat, m: Nat) : (== (mul (S n) m) (+ m (mul n m))) =
-  match m
-    | => (rfl Nat Zero)
-    | p =>
-      (EQ.tran Nat (+ (S n) (mul (S n) p)) (+ (S n) (+ p (mul n p))) (+ (S p) (+ n (mul n p)))
-        (congruence Nat Nat (mul (S n) p) (+ p (mul n p))
-          ((x: Nat): Nat => (+ (S n) x)) (mul.left.succ n p))
-        (congruence Nat Nat (+ n (+ p (mul n p))) (+ p (+ n (mul n p)))
-          S (add.swap n p (mul n p))))
-)`)
-
-compile(`(mul.comm (n: Nat, m: Nat) : (== (mul n m) (mul m n)) =
+compile(`(mul.succ (n: Nat, m: Nat) : (== (+ n (mul n m)) (mul n (S m))) = 
   match n
-    | => (EQ.tran Nat (mul Zero m) Zero (mul m Zero)
-      (mul.zero.left m) (EQ.symm Nat (mul m Zero) Zero (mul.0 m)))
+    | => (rfl Nat n0)
     | p =>
-      (EQ.tran Nat (mul (S p) m) (+ m (mul p m)) (mul m (S p))
-        (mul.left.succ p m)
-        (EQ.tran Nat (+ m (mul p m)) (+ m (mul m p)) (mul m (S p))
-          (congruence Nat Nat (mul p m) (mul m p)
-            ((x: Nat): Nat => (+ m x)) (mul.comm p m))
-          (EQ.symm Nat (mul m (S p)) (+ m (mul m p)) (mul.succ m p))))
+    (pm : Nat = (mul p m))
+    (congn (+ p (+ m pm)) (+ m (mul p (S m))) S 
+      (EQ.tran Nat (+ p (+ m pm)) (+ m (+ p pm)) (+ m (mul p (S m)))
+        ((((EQ.symm Nat (+ m (+ p pm)) (+ (+ m p) pm) (add.assoc m p pm)) )
+          ((x:Nat):Type => (== (+ p (+ m pm)) x))
+          ((add.comm p m)((x: Nat):Type => (== (+ p (+ m pm)) (+x pm))) (add.assoc p m pm) )
+        ))
+        (congn (+ p pm) (mul p (S m)) ((x:Nat):Nat => ( (+ m x))) (mul.succ p m))
+      )
+    )
+)`)
+
+compile(`(mul.comm (n:Nat, m: Nat) : (== (mul n m) (mul m n)) =
+  match n
+    | => (mul.0 m)
+    | p => (EQ.tran Nat (+ m (mul p m)) (+ m (mul m p)) (mul m n)
+        (congn (mul p m) (mul m p) ((x:Nat):Nat => (+m x)) (mul.comm p m)) (mul.succ m p ))
 )`)
 
 // compile(`( AND (A: Type, B: Type) : Type  = | (a: A, b: B))`)
@@ -725,28 +714,28 @@ compile(`(mul.comm (n: Nat, m: Nat) : (== (mul n m) (mul m n)) =
 //     (witness Zero)
 // )`)
 
-// compile(`( DeadBox (T: Type) : Type = | (-x: T) )`)
-// compile(`( LiveBox (T: Type) : Type = | (x: T) )`)
-// compile(`( mkDead (-T : Type, -x: T) : (DeadBox T) = (#0 x))`)
-// decline(`( castBox (-T: Type, b: (DeadBox T)) : (LiveBox T) = b )`)
-// decline(`( fromrfl : Empty = rfl )`)
-// decline(`( fromrfl (x:Nat): Empty = rfl )`)
-// decline(`(_false_arrow : Empty = (x: NULL) -> NULL)`)
-// decline(`(_false_adt : Empty = |)`)
+compile(`( DeadBox (T: Type) : Type = | (-x: T) )`)
+compile(`( LiveBox (T: Type) : Type = | (x: T) )`)
+compile(`( mkDead (-T : Type, -x: T) : (DeadBox T) = (#0 x))`)
+decline(`( castBox (-T: Type, b: (DeadBox T)) : (LiveBox T) = b )`)
+decline(`( fromrfl : Empty = rfl )`)
+decline(`( fromrfl (x:Nat): Empty = rfl )`)
+decline(`(_false_arrow : Empty = (x: NULL) -> NULL)`)
+decline(`(_false_adt : Empty = |)`)
 
-// decline(`(_boom (n: Nat) : Empty = sorry)`)
-// compile(`(_castNull (x: NULL): (| ()) = x)`)
-// decline(`(_castBad (x: NULL): (| (x:Nat)) = x)`)
-// decline(`(_badTF (x: NULL) : Data = ((x:NULL) -> NULL))`)
-// decline(`(D : Data = | (f: (((z: NULL): Data => ((x: D) -> Empty)) Null)))`)
+decline(`(_boom (n: Nat) : Empty = sorry)`)
+compile(`(_castNull (x: NULL): (| ()) = x)`)
+decline(`(_castBad (x: NULL): (| (x:Nat)) = x)`)
+decline(`(_badTF (x: NULL) : Data = ((x:NULL) -> NULL))`)
+decline(`(D : Data = | (f: (((z: NULL): Data => ((x: D) -> Empty)) Null)))`)
 
 
 
-// decline(`(
-//   packBad (f: Kl) :
-//     (((Type: Type): Type => (| (f: Kl))) Data)
-//     = (#0 f))`)
+decline(`(
+  packBad (f: Kl) :
+    (((Type: Type): Type => (| (f: Kl))) Data)
+    = (#0 f))`)
 
-// decline(`(unpackBad
-//   (b: (((Type: Type): Type => (| (f: Kl))) Data))
-//   : Kl = match b | f => f)`)
+decline(`(unpackBad
+  (b: (((Type: Type): Type => (| (f: Kl))) Data))
+  : Kl = match b | f => f)`)
