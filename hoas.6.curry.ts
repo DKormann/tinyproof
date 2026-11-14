@@ -627,38 +627,54 @@ compile(`( add.assoc (n: Nat, m: Nat, k: Nat) : ( == (+ n (+ m k)) (+ (+ n m) k)
 )`)
 
 compile(`(mul (n: Nat, m: Nat) : Nat =
-  match n | => Zero | p => (+ m (mul p m))
+  match m | => Zero | p => (+ n (mul n p))
 )`)
 
 compile(`(mul.0 (m: Nat) : (== (mul m Zero) Zero) = 
   match m | => (rfl Nat Zero) | p => (mul.0 p)
 )`)
 
-compile(`(mul.1 (n:Nat) : (== (mul n n1) n) = 
-  match n
-    | => (rfl Nat n0)
-    | p => ( congruence Nat Nat (mul p n1) p S (mul.1 p) )
-  )`)
+compile(`(mul.1 (n:Nat) : (== (mul n n1) n) = (add.0 n) )`)
 
 compile(`(mul.succ (n: Nat, m: Nat) : (== (mul n (S m)) (+ n (mul n m))) =
-  match m
-    | => (
-      EQ.tran Nat (mul n n1) n (+ n (mul n n0))
-        (mul.1 n)
-        (
-          EQ.tran Nat n (+ n n0) (+ n (mul n n0))
-          (add.comm n0 n)
-          ((mul.0 n) ((x:Nat): Type => (EQ Nat (+n x) (+ n (mul n n0)))) (rfl Nat (+ n (mul n n0))) )
-        )
-    )
-    | p => sorry
+  (rfl Nat (+ n (mul n m)))
   )`)
 
-// compile(`(mul.symm (n: Nat, m: Nat) : (== (mul n m) (mul m n)) =
-//   match n
-//     | => (EQ.symm Nat (mul m n0) n0 (mul.0 m) )
-//     | p => sorry
-// )`)
+compile(`(add.swap (a: Nat, b: Nat, c: Nat) : (== (+ a (+ b c)) (+ b (+ a c))) =
+  (EQ.tran Nat (+ a (+ b c)) (+ (+ a b) c) (+ b (+ a c))
+    (add.assoc a b c)
+    (EQ.tran Nat (+ (+ a b) c) (+ (+ b a) c) (+ b (+ a c))
+      (congruence Nat Nat (+ a b) (+ b a) ((x: Nat): Nat => (+ x c)) (add.comm a b))
+      (EQ.symm Nat (+ b (+ a c)) (+ (+ b a) c) (add.assoc b a c))))
+)`)
+
+compile(`(mul.zero.left (m: Nat) : (== (mul Zero m) Zero) =
+  match m | => (rfl Nat Zero) | p => (mul.zero.left p)
+)`)
+
+compile(`(mul.left.succ (n: Nat, m: Nat) : (== (mul (S n) m) (+ m (mul n m))) =
+  match m
+    | => (rfl Nat Zero)
+    | p =>
+      (EQ.tran Nat (+ (S n) (mul (S n) p)) (+ (S n) (+ p (mul n p))) (+ (S p) (+ n (mul n p)))
+        (congruence Nat Nat (mul (S n) p) (+ p (mul n p))
+          ((x: Nat): Nat => (+ (S n) x)) (mul.left.succ n p))
+        (congruence Nat Nat (+ n (+ p (mul n p))) (+ p (+ n (mul n p)))
+          S (add.swap n p (mul n p))))
+)`)
+
+compile(`(mul.comm (n: Nat, m: Nat) : (== (mul n m) (mul m n)) =
+  match n
+    | => (EQ.tran Nat (mul Zero m) Zero (mul m Zero)
+      (mul.zero.left m) (EQ.symm Nat (mul m Zero) Zero (mul.0 m)))
+    | p =>
+      (EQ.tran Nat (mul (S p) m) (+ m (mul p m)) (mul m (S p))
+        (mul.left.succ p m)
+        (EQ.tran Nat (+ m (mul p m)) (+ m (mul m p)) (mul m (S p))
+          (congruence Nat Nat (mul p m) (mul m p)
+            ((x: Nat): Nat => (+ m x)) (mul.comm p m))
+          (EQ.symm Nat (mul m (S p)) (+ m (mul m p)) (mul.succ m p))))
+)`)
 
 // compile(`( AND (A: Type, B: Type) : Type  = | (a: A, b: B))`)
 
