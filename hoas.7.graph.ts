@@ -293,6 +293,7 @@ function compile(s: string) : Term{
       if (!(tr in ctx)) raise(`identifier not found in context: ${tr}`)
       return ctx[tr]
     }
+    if (tr[0] == "|" && tr.length == 1) return {$:"ADT", variants:[], ty: ty ?? Type}
     if (tr.length == 1) return asTerm(tr[0], ty, ctx)
 
     if (tr[0] == "match"){
@@ -366,7 +367,8 @@ function compile(s: string) : Term{
     tr = tr.slice(2)
   }
   if (tr[1] != "=") raise(`expected a "=" after the type annotation, but got: ${JSON.stringify(tr[1])}`)
-  Object.assign(body, asTerm(tr.slice(2), type, ctx))
+  let res =asTerm(tr.slice(2), type, ctx)
+  Object.assign(body, {...res, ty:type ?? res.ty})
 
   console.log(name,":", fmt(body.ty), "=",fmt(body, true))
   check(body)
@@ -398,323 +400,261 @@ compile("False : BOOL = #0() ")
 
 
 
-// compile("(_type_identity (x:Type) : Type = x)")
-// compile("(_bool_identity (x:BOOL) : BOOL = match x | => x | => x)")
-// compile("(_bool_rebuild (x:BOOL) : BOOL = match x | => True | => False)")
-// decline("(_bad_bool_branch_right (x:BOOL) : BOOL = match x | => True | => NULL)")
-// decline("(_bad_bool_branch_left (x:BOOL) : BOOL = match x | => NULL | => True)")
+compile("_type_identity = (x:Type) : Type => x")
+compile("_bool_identity = (x:BOOL) : BOOL => match x | => x | => x")
+compile("_bool_rebuild = (x:BOOL) : BOOL => match x | => True | => False")
+decline("_bad_bool_branch_right = (x:BOOL) : BOOL => match x | => True | => NULL")
+decline("_bad_bool_branch_left = (x:BOOL) : BOOL => match x | => NULL | => True")
 
 compile("TF = (x:BOOL) : Type => match x | => NULL | => BOOL")
 compile("_tfm = (x:BOOL) : (TF(x)) => match x | => Null | => True")
 
-// compile("(SIG : Type = | (w: BOOL, y: (TF w) ) )")
-// compile("(_sig1 : SIG = (#0 True True) ) ")
-// decline("(_sig_missing_field : SIG = (#0 True) )")
-// decline("(_sig_bad_true_payload : SIG = (#0 True Null) )")
-// decline("(_sig_bad_false_payload : SIG = (#0 False True) )")
-// compile("(_sig_false_null : SIG = (#0 False Null) )")
+compile("SIG : Type = | (w: BOOL, y: TF(w))")
+compile("_sig1 : SIG = #0(True True)")
+decline("_sig_missing_field : SIG = #0(True)")
+decline("_sig_bad_true_payload : SIG = #0(True Null)")
+decline("_sig_bad_false_payload : SIG = #0(False True)")
+compile("_sig_false_null : SIG = #0(False Null)")
 
-// compile("(WRP (T: Type): Type = | (x: T) )")
-// compile("(_wrp_bool : (WRP BOOL) = (#0 True) )")
-// decline("(_bad_wrp_null : (WRP NULL) = (#0 True) )")
+compile("WRP = (T: Type) : Type => | (x: T)")
+compile("_wrp_bool : (WRP(BOOL)) = #0(True)")
+decline("_bad_wrp_null : (WRP(NULL)) = #0(True)")
 
 compile("Nat: Data = | () | (p: Nat) ")
 compile("Zero : Nat = #0() ")
 compile("letz = x = Zero x")
 compile("leta = x :Nat = Zero x")
-// compile("(S (n: Nat) : Nat = (#1 n) )")
-// compile("(pred (n: Nat) : Nat = match n | => Zero | p => p )")
+compile("S = (n: Nat) : Nat => #1(n)")
+compile("pred = (n: Nat) : Nat => match n | => Zero | p => p")
 
-// compile("(eater (n: Nat): Nat = match n | => Zero | p => (eater p) )")
-// compile("(n0 : Nat = Zero)")
-// compile("(n1 : Nat = (S Zero) )")
-// compile("(n2 : Nat = (S (S Zero ))  )")
-// compile("(aro : Type = (x: Nat) -> Nat )")
+compile("eater = (n: Nat) : Nat => match n | => Zero | p => eater(p)")
+compile("n0 : Nat = Zero")
+compile("n1 : Nat = S(Zero)")
+compile("n2 : Nat = S((S(Zero)))")
+compile("natArrow : Type = (x: Nat) -> Nat")
 
-// decline("(NDT : Nat = Type)")
-// decline("(_bad_data_type : Data = Type)")
-// compile("(TID : Data = Nat)")
-// compile("(DID : Type = Type)")
-// compile("(_uu : aro = pred )")
+decline("NDT : Nat = Type")
+decline("_bad_data_type : Data = Type")
+compile("TID : Data = Nat")
+compile("DID : Type = Type")
+compile("_uu : natArrow = pred")
 
-// compile(`( _oneof_nat (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#0 n) ) ` )
-// decline(`( _bad_oneof_bool (n: Nat) : (| ( x : Nat )  | ( y : BOOL ) ) = (#1 n) ) ` )
-// compile(`( _typeid (T: Type) :Type = T)`)
-// compile(`( _dataid (T: Data) :Data = T)`)
-// decline(`( _typeup (T: Type) :Data = T)`)
-// compile(`( _dataup (T: Data) :Type = T)`)
-// compile(`( _intersection (t: Data, x: t) : (|(a: t, b: t)) = (#0 x x))`)
-// decline(`( _notaffine (t: Type, x: t) : (|(a: t, b: t)) = (#0 x x))`)
+compile(`_oneof_nat = (n: Nat) : (| (x: Nat) | (y: BOOL)) => #0(n)`)
+decline(`_bad_oneof_bool = (n: Nat) : (| (x: Nat) | (y: BOOL)) => #1(n)`)
+compile(`_typeid = (T: Type) : Type => T`)
+compile(`_dataid = (T: Data) : Data => T`)
+decline(`_typeup = (T: Type) : Data => T`)
+compile(`_dataup = (T: Data) : Type => T`)
+compile(`_intersection = (t: Data, x: t) : (| (a: t, b: t)) => #0(x x)`)
+decline(`_notaffine = (t: Type, x: t) : (| (a: t, b: t)) => #0(x x)`)
 
-// compile ("(_inferLam : ((x: Nat) -> Nat) = ( (x: Nat) => x) ) ")
+compile("_inferLam : ((x: Nat) -> Nat) = (x: Nat) => x")
 
-// compile("(_pp : (EQ  Nat (pred n1) Zero ) = (rfl Nat Zero) ) ")
-// compile("(_ppe : (EQ  Nat (eater n2) Zero ) = (rfl Nat Zero) ) ")
-// decline("(_ppne : (EQ  Nat (pred n2) Zero ) = (rfl Nat Zero) )")
+compile("_pp : (EQ(Nat (pred(n1)) Zero)) = rfl(Nat Zero)")
+compile("_ppe : (EQ(Nat (eater(n2)) Zero)) = rfl(Nat Zero)")
+decline("_ppne : (EQ(Nat (pred(n2)) Zero)) = rfl(Nat Zero)")
 
-// compile(`(pr0 (n: Nat ) : (EQ Nat Zero Zero) =  match n | => (rfl Nat n) | p => (rfl Nat Zero) ) `)
+compile(`pr0 = (n: Nat) : (EQ(Nat Zero Zero)) => match n | => rfl(Nat n) | p => rfl(Nat Zero)`)
 
-// compile (" (NPred : Type = (n: Nat) -> Type )")
+compile("NPred : Type = (n: Nat) -> Type")
 
-// compile(`(_apply_predicate (n: Nat, P:NPred, h: ((x: Nat) -> (P x))) : (P n) =  (h n) ) `)
-// decline(`(_bad_apply_zero (n: Nat, P:NPred, h: ((x: Nat) -> (P x))) : (P n) =  (h Zero) ) `)
+compile(`_apply_predicate = (n: Nat, P:NPred, h: ((x: Nat) -> P(x))) : (P(n)) => h(n)`)
+decline(`_bad_apply_zero = (n: Nat, P:NPred, h: ((x: Nat) -> P(x))) : (P(n)) => h(Zero)`)
 
-// compile(`(_apply_predicate_match (n: Nat, P:NPred, h: ((x: Nat) -> (P x))) : (P n) = match n | => (h n) | p => (h n) ) `)
-// decline(`(_bad_apply_predecessor (n: Nat, P:NPred, h: ((x: Nat) -> (P x))) : (P n) = match n | => (h n) | p => (h p) ) `)
+compile(`_apply_predicate_match = (n: Nat, P:NPred, h: ((x: Nat) -> P(x))) : (P(n)) => match n | => h(n) | p => h(n)`)
+decline(`_bad_apply_predecessor = (n: Nat, P:NPred, h: ((x: Nat) -> P(x))) : (P(n)) => match n | => h(n) | p => h(p)`)
 
-// compile(`(isZ (n: Nat) : Type = (EQ Nat Zero n))`)
-// compile("(_eater_is_zero_type (n: Nat) : Type = (isZ (eater n))) ")
+compile(`isZ = (n: Nat) : Type => EQ(Nat Zero n)`)
+compile("_eater_is_zero_type = (n: Nat) : Type => isZ((eater(n)))")
 
-// compile("(eater_n_eq (n: Nat): (EQ Nat (eater n) (eater (S n)) ) = (rfl Nat (eater n)) )")
+compile("eater_n_eq = (n: Nat) : (EQ(Nat (eater(n)) (eater((S(n)))))) => rfl(Nat (eater(n)))")
 
-// decline("(_bad_eater_proof (n: Nat): (EQ Nat (eater n) (eater (S n)) ) = (rfl Nat (pred n)) )")
-// decline("(_bad_zero_one_proof (n: Nat): (EQ Nat Zero n1) = (rfl Nat Zero)")
-// compile(`(_eater_proof (n: Nat ) : ( EQ Nat (eater n) (eater (S n) ) ) = ( eater_n_eq n ) )`)
+decline("_bad_eater_proof = (n: Nat) : (EQ(Nat (eater(n)) (eater((S(n)))))) => rfl(Nat (pred(n)))")
+decline("_bad_zero_one_proof = (n: Nat) : (EQ(Nat Zero n1)) => rfl(Nat Zero)")
+compile(`_eater_proof = (n: Nat) : (EQ(Nat (eater(n)) (eater((S(n)))))) => eater_n_eq(n)`)
 
-// compile(`(eater_0 (n: Nat) : (isZ (eater n)) =  match n | => (rfl Nat Zero) | p => ((eater_n_eq p) isZ (eater_0 p)) )`)
+compile(`eater_0 = (n: Nat) : (isZ((eater(n)))) => match n | => rfl(Nat Zero) | p => (eater_n_eq(p))(isZ (eater_0(p)))`)
 
-// compile(`(_cloj (x: Nat) : Nat = (y : Nat = Zero) y)`)
-// compile(`(_cloj2 : ((x:Nat) -> Nat ) = (x: Nat): Nat => x)`)
+compile(`_cloj = (x: Nat) : Nat => (y : Nat = Zero y)`)
+compile(`_cloj2 : ((x:Nat) -> Nat) = (x: Nat): Nat => x`)
 
-// compile(`( EQ.tran (T: Type, a: T, b: T, c: T, e1: (EQ T a b), e2: (EQ T b c)) : (EQ T a c) = (e2 ((x: T) : Type => (EQ T a x)) e1) )`)
+compile(`EQ.tran = (T: Type, a: T, b: T, c: T, e1: EQ(T a b), e2: EQ(T b c)) : (EQ(T a c)) => e2(((x: T) : Type => EQ(T a x)) e1)`)
 
-// compile(`(_type_arrow (T: Type) : Type = (x: T) -> T)`)
-
-// decline(`(_bad_duplicate_type (T: Type, P: ((a:Type, b: Type)-> Type ) ) : Type = (P T T))`)
-// decline(`(_bad_use_dead_type (-T: Type, P: ((a:Type, b: Type)-> Type ) ) : Type = (P T T))`)
+compile(`_type_arrow = (T: Type) : Type => (x: T) -> T`)
 
-// compile(`(_use2Nat (x: Nat, P: ((a: Nat, b: Nat) -> Type)) : Type = (P x x))`)
-// decline(`( _death (-x:Nat) : Nat = x)`)
-
-// compile(`(N2N : Type = ((x:Nat) -> Nat))`)
-// decline(`(_aroData : Data = ((x:Nat) -> Nat))`)
+decline(`_bad_duplicate_type = (T: Type, P: ((a:Type, b: Type)-> Type)) : Type => P(T T)`)
+decline(`_bad_use_dead_type = (-T: Type, P: ((a:Type, b: Type)-> Type)) : Type => P(T T)`)
 
-// decline(`(eAdt : Data = | (x: N2N))`)
-// compile(`(tAdt : Type = | (x: N2N))`)
-// compile(`(_gAdt : Data = | (x: Nat))`)
+compile(`_use2Nat = (x: Nat, P: ((a: Nat, b: Nat) -> Type)) : Type => P(x x)`)
+decline(`_death = (-x:Nat) : Nat => x`)
 
-// decline(`(_bad_duplicate_tadt (x: tAdt) : (| (x: tAdt, y: tAdt))  = (#0 x x))`)
-// compile(`(_use_tadt_once (x: tAdt) : (| (x: tAdt, y: Nat))  = (#0 x n0))`)
+compile(`N2N : Type = (x:Nat) -> Nat`)
+decline(`_aroData : Data = (x:Nat) -> Nat`)
 
-// compile(`(_usedeadT (-T: Type, x: T) : T = x)`)
+decline(`eAdt : Data = | (x: N2N)`)
+compile(`tAdt : Type = | (x: N2N)`)
+compile(`_gAdt : Data = | (x: Nat)`)
 
-// compile(`(_call_dead_type (x:Nat): Nat = (_usedeadT Nat x))`)
-// decline(`(_bad_call_dead_type (x:Nat): Nat = (_usedeadT BOOL x))`)
+decline(`_bad_duplicate_tadt = (x: tAdt) : (| (x: tAdt, y: tAdt)) => #0(x x)`)
+compile(`_use_tadt_once = (x: tAdt) : (| (x: tAdt, y: Nat)) => #0(x n0)`)
 
+compile(`_usedeadT = (-T: Type, x: T) : T => x`)
 
-// compile(`(_passDead(-T: Type, -x:T, f: ((-x:T)->T) ) : T = (f x) )`)
-
-// compile(`(_erlf (-T: Type, x: T) : (EQ T x x) = (rfl T  x))`)
-
-
-// compile(`( Empty : Type = | )`)
-// compile(`( K : Type = (-x: K) -> Empty)`)
-// compile(`( Kp (xt: K) : Empty = (xt xt) )`)
-
-// decline(`( ep: Empty = (Kp Kp) )`)
-// decline(`( _bad_Kp_dead (-xt: K) : Empty = (xt xt) )`)
-
-// compile(`( Kl  : Type = (x: Kl) -> Empty)`)
-// decline(`( _bad_Kl_self_apply (xt: Kl)  : Empty = (xt xt))`)
-// decline(`( _bad_Kl_dead_self_apply (-xt: Kl) : Empty = (xt xt))`)
-// compile(`( Kl_identity (xt: Kl) : Kl = xt)`)
-// compile(`( Kl_apply (xt: Kl, yt: Kl) : Empty = (xt yt))`)
-// decline(`( _bad_Kl_apply_dead (xt: Kl, -yt: Kl) : Empty = (xt yt))`)
-
-// compile(`( EQ.symm (-T: Type, a: T, b: T, e: (EQ T a b)) : (EQ T b a) =
-//   (e
-//     ((x: T) : Type => (EQ T x a))
-//     (rfl T a)
-//   )
-// )`)
-
-
-// compile(`( + (n: Nat, m: Nat) : Nat = match n | => m | p => (S (+ p m)) )`)
-// compile(`(== (n: Nat, m: Nat) : Type = (EQ Nat n m))`)
-
-// compile( `(
-//   congruence (
-//     T: Type,
-//     U : Type,
-//     a: T,
-//     b: T,
-//     f: ((x:T) -> U),
-//     e: (EQ T a b)
-//   ) : (EQ U (f a) (f b))
-//   =
-//   (e
-//     ((x: T) : Type => (EQ U (f a) (f x)))
-//     (rfl U (f a))
-//   )
-// )`)
-
-// compile(`( add.succ.0 (n: Nat, k: Nat) : (== (+ (S n) k) (S (+ n k) )) = (rfl Nat (+ (S n) k)) )`)
-// compile(`( add.0.step (n: Nat, h: (== (+ n n0) n) )
-//   : (==  (+ (S n) n0) (S n) )
-//   = (congruence Nat Nat (+ n n0) n S h)
-// )`)
-
-// compile(`( add.0 (n: Nat) : (== (+ n n0) n) =
-//   match n
-//     | => (rfl Nat n0)
-//     | p => (add.0.step p (add.0 p) )
-// )`)
-
-// compile(`( add.0.symm (n: Nat) : (== n (+ n n0)) = ( EQ.symm Nat (+ n n0) n (add.0 n) ) )`)
-// compile(`(add.succ.p (n: Nat) : (== (S n) (+ n n1)) = match n
-//   | => (rfl Nat n1)
-//   | p =>(congruence Nat Nat (S p) (+ p n1) S (add.succ.p p))  )`)
-
-// compile(`( add.succ (n: Nat, m: Nat) : (== (S (+ n m)) (+ n (S m)) ) =
-//   match n
-//     | => (rfl Nat (S m))
-//     | p => (congruence Nat Nat (S (+ p m)) (+ p (S m)) S (add.succ p m))
-// )`)
-
-// compile(`( add.comm (n: Nat, m: Nat) : (== (+ n m) (+ m n)) =
-//   match n
-//     | => (add.0.symm m)
-//     | p =>
-//       (EQ.tran Nat (S (+ p m)) (S (+ m p)) (+ m (S p))
-//         ( congruence Nat Nat (+ p m) (+ m p) S (add.comm p m) )
-//         ( add.succ m p ) )
-// )`)
-
-// compile(`( add.assoc (n: Nat, m: Nat, k: Nat) : ( == (+ n (+ m k)) (+ (+ n m) k) ) =
-//   match n
-//     | => (rfl Nat (+ m k))  
-//     | p => (congruence Nat Nat (+ p (+ m k)) (+ (+ p m) k) S (add.assoc p m k))
-// )`)
-
-// compile(`(assoc.symm (n: Nat, m: Nat, k: Nat) : (== (+ (+ n m) k) (+ n (+ m k)) ) = (EQ.symm Nat (+ n (+ m k)) (+ (+ n m) k) (add.assoc n m k)))`)
-
-// compile(`(mul (n: Nat, m: Nat) : Nat = match n | => Zero | p => (+ m (mul p m)) )`)
-
-// compile(`(mul.0 (m: Nat) : (== n0 (mul m n0)) =  match m | => (rfl Nat n0) | p => (mul.0 p) )`)
-
-// compile(`(congn (a:Nat, b: Nat, f: ((x: Nat) -> Nat), e: (== a b) ) : (== (f a) (f b)) = (congruence Nat Nat a b f e))`)
-
-// compile(`(mul.succ (n: Nat, m: Nat) : (== (+ n (mul n m)) (mul n (S m))) = 
-//   match n
-//     | => (rfl Nat n0)
-//     | p =>
-//     (pm : Nat = (mul p m))
-//     (congn (+ p (+ m pm)) (+ m (mul p (S m))) S 
-//       (EQ.tran Nat (+ p (+ m pm)) (+ m (+ p pm)) (+ m (mul p (S m)))
-//         ((((EQ.symm Nat (+ m (+ p pm)) (+ (+ m p) pm) (add.assoc m p pm)) )
-//           ((x:Nat):Type => (== (+ p (+ m pm)) x))
-//           ((add.comm p m)((x: Nat):Type => (== (+ p (+ m pm)) (+x pm))) (add.assoc p m pm) )
-//         ))
-//         (congn (+ p pm) (mul p (S m)) ((x:Nat):Nat => ( (+ m x))) (mul.succ p m))
-//       )
-//     )
-// )`)
-
-// compile(`(mul.comm (n:Nat, m: Nat) : (== (mul n m) (mul m n)) =
-//   match n
-//     | => (mul.0 m)
-//     | p => (EQ.tran Nat (+ m (mul p m)) (+ m (mul m p)) (mul m n)
-//         (congn (mul p m) (mul m p) ((x:Nat):Nat => (+m x)) (mul.comm p m)) (mul.succ m p ))
-// )`)
-
-
-// compile(`(addswap2 (a: Nat, b: Nat, c: Nat, d: Nat)
-//   : (== (+ (+ a b) (+ c d)) (+ (+ a c) (+ b d)) ) =
-//   (P: (Prop Nat) = ((x: Nat): Type => (== (+ (+ a b) (+ c d)) x)))
-//   (h: (P (+ a (+ b (+ c d)))) = ((assoc.symm a b (+ c d)) P (rfl Nat (+ (+ a b) (+ c d)))))
-//   (h: (P (+ a (+ (+ b c) d))) = ((add.assoc b c d) ((x: Nat):Type => (P (+ a x))) h))
-//   (h: (P (+ a (+ (+ c b) d))) = ((add.comm b c) ((x: Nat): Type => (P (+a (+ x d)))) h ))
-//   (h: (P (+ a (+ c (+ b d)))) = ((assoc.symm c b d) ((x:Nat):Type => (P (+ a x))) h))
-//   (h: (P (+ (+ a c) (+ b d))) = ((add.assoc a c (+ b d)) P h))
-//   h
-  
-// )`)
-
-// compile(`(mul.dist (a: Nat, b: Nat, c: Nat) : (== (mul a (+ b c)) (+ (mul a b) (mul a c))) =
-//   match a
-//     | => (rfl Nat n0)
-//     | p =>
-//       (EQ.tran 
-//         Nat
-//         (+ (+b c) (mul p (+b c)))
-//         (+ (+b c) (+(mul p b) (mul p c)))
-//         (+(+b(mul p b)) (+c(mul p c)))
-//         (congn (mul p (+b c)) (+(mul p b) (mul p c)) ((x:Nat):Nat => (+ (+b c) x)) (mul.dist p b c))
-//         (addswap2 b c (mul p b) (mul p c))
-//       )
-// )`)
-
-// compile(`( AND (A: Type, B: Type) : Type  = | (a: A, b: B))`)
-
-// compile(`( _f (T: Type, P: ((x:Type) -> Type), a: (P T) ) : (P T) = a )`)
-
-// compile(`(
-//   BadM (m: Nat) : Type =
-//     match m
-//       | => NULL
-//       | q => Empty
-// )`)
-
-// compile(`(
-//   BadTy (n: Nat, m: Nat) : Type =
-//     match n
-//       | => (BadM m)
-//       | p => Empty
-// )`)
-
-// decline(`(
-//   badRec (n: Nat, m: Nat) : (BadTy n m) =
-//     match n
-//       | => (
-//           match m
-//             | => Null
-//             | q => (badRec (S q) q)
-//         )
-//       | p => (
-//           match p
-//             | => (badRec p (S p))
-//             | r => (badRec p (S p))
-//         )
-// )`)
-
-// decline(`(_badbad : Empty = _badbad)`)
-
-// compile(`(Fam (n: Nat) : Type = NULL)`)
-
-// compile(`(
-//   witness (n: Nat) : (Fam n) =
-//     Null
-// )`)
-
-// decline(`(Fam (n: Nat) : Type = Empty)`)
-
-// decline(`(
-//   _bad_empty_rebind : Empty =
-//     (witness Zero)
-// )`)
-
-// compile(`( DeadBox (T: Type) : Type = | (-x: T) )`)
-// compile(`( LiveBox (T: Type) : Type = | (x: T) )`)
-// compile(`( mkDead (-T : Type, -x: T) : (DeadBox T) = (#0 x))`)
-// decline(`( castBox (-T: Type, b: (DeadBox T)) : (LiveBox T) = b )`)
-// decline(`( fromrfl : Empty = rfl )`)
-// decline(`( fromrfl (x:Nat): Empty = rfl )`)
-// decline(`(_false_arrow : Empty = (x: NULL) -> NULL)`)
-// decline(`(_false_adt : Empty = |)`)
-
-// decline(`(_boom (n: Nat) : Empty = sorry)`)
-// compile(`(_castNull (x: NULL): (| ()) = x)`)
-// decline(`(_castBad (x: NULL): (| (x:Nat)) = x)`)
-// decline(`(_badTF (x: NULL) : Data = ((x:NULL) -> NULL))`)
-// decline(`(D : Data = | (f: (((z: NULL): Data => ((x: D) -> Empty)) Null)))`)
-
-
-
-// decline(`(
-//   packBad (f: Kl) :
-//     (((Type: Type): Type => (| (f: Kl))) Data)
-//     = (#0 f))`)
-
-// decline(`(unpackBad
-//   (b: (((Type: Type): Type => (| (f: Kl))) Data))
-//   : Kl = match b | f => f)`)
+compile(`_call_dead_type = (x:Nat) : Nat => _usedeadT(Nat x)`)
+decline(`_bad_call_dead_type = (x:Nat) : Nat => _usedeadT(BOOL x)`)
+
+compile(`_passDead = (-T: Type, -x:T, f: ((-x:T)->T)) : T => f(x)`)
+
+compile(`_erlf = (-T: Type, x: T) : (EQ(T x x)) => rfl(T x)`)
+
+
+compile(`Empty : Type = |`)
+compile(`K : Type = (-x: K) -> Empty`)
+compile(`Kp = (xt: K) : Empty => xt(xt)`)
+
+decline(`ep: Empty = Kp(Kp)`)
+decline(`_bad_Kp_dead = (-xt: K) : Empty => xt(xt)`)
+
+compile(`Kl : Type = (x: Kl) -> Empty`)
+decline(`_bad_Kl_self_apply = (xt: Kl) : Empty => xt(xt)`)
+decline(`_bad_Kl_dead_self_apply = (-xt: Kl) : Empty => xt(xt)`)
+compile(`Kl_identity = (xt: Kl) : Kl => xt`)
+compile(`Kl_apply = (xt: Kl, yt: Kl) : Empty => xt(yt)`)
+decline(`_bad_Kl_apply_dead = (xt: Kl, -yt: Kl) : Empty => xt(yt)`)
+
+compile(`EQ.symm = (-T: Type, a: T, b: T, e: EQ(T a b)) : (EQ(T b a)) =>
+  e(((x: T) : Type => EQ(T x a)) (rfl(T a)))`)
+
+
+compile(`+ = (n: Nat, m: Nat) : Nat => match n | => m | p => S((+(p m)))`)
+compile(`== = (n: Nat, m: Nat) : Type => EQ(Nat n m)`)
+
+compile(`congruence = (
+  T: Type, U: Type, a: T, b: T,
+  f: ((x:T) -> U), e: EQ(T a b)
+) : (EQ(U (f(a)) (f(b)))) =>
+  e(((x: T) : Type => EQ(U (f(a)) (f(x)))) (rfl(U (f(a)))))`)
+
+compile(`add.succ.0 = (n: Nat, k: Nat) : (==((+((S(n)) k)) (S((+(n k)))))) => rfl(Nat (+((S(n)) k)))`)
+compile(`add.0.step = (n: Nat, h: ==((+(n n0)) n)) : (==((+((S(n)) n0)) (S(n)))) =>
+  congruence(Nat Nat (+(n n0)) n S h)`)
+
+compile(`add.0 = (n: Nat) : (==((+(n n0)) n)) =>
+  match n | => rfl(Nat n0) | p => add.0.step(p (add.0(p)))`)
+
+compile(`add.0.symm = (n: Nat) : (==(n (+(n n0)))) => EQ.symm(Nat (+(n n0)) n (add.0(n)))`)
+compile(`add.succ.p = (n: Nat) : (==((S(n)) (+(n n1)))) => match n
+  | => rfl(Nat n1)
+  | p => congruence(Nat Nat (S(p)) (+(p n1)) S (add.succ.p(p)))`)
+
+compile(`add.succ = (n: Nat, m: Nat) : (==((S((+(n m)))) (+(n (S(m)))))) =>
+  match n
+    | => rfl(Nat (S(m)))
+    | p => congruence(Nat Nat (S((+(p m)))) (+(p (S(m)))) S (add.succ(p m)))`)
+
+compile(`add.comm = (n: Nat, m: Nat) : (==((+(n m)) (+(m n)))) =>
+  match n
+    | => add.0.symm(m)
+    | p => EQ.tran(Nat (S((+(p m)))) (S((+(m p)))) (+(m (S(p))))
+        (congruence(Nat Nat (+(p m)) (+(m p)) S (add.comm(p m)))) (add.succ(m p)))`)
+
+compile(`add.assoc = (n: Nat, m: Nat, k: Nat) : (==((+(n (+(m k)))) (+((+(n m)) k)))) =>
+  match n
+    | => rfl(Nat (+(m k)))
+    | p => congruence(Nat Nat (+(p (+(m k)))) (+((+(p m)) k)) S (add.assoc(p m k)))`)
+
+compile(`assoc.symm = (n: Nat, m: Nat, k: Nat) : (==((+((+(n m)) k)) (+(n (+(m k)))))) =>
+  EQ.symm(Nat (+(n (+(m k)))) (+((+(n m)) k)) (add.assoc(n m k)))`)
+
+compile(`mul = (n: Nat, m: Nat) : Nat => match n | => Zero | p => +(m (mul(p m)))`)
+
+compile(`mul.0 = (m: Nat) : (==(n0 (mul(m n0)))) => match m | => rfl(Nat n0) | p => mul.0(p)`)
+
+compile(`congn = (a:Nat, b: Nat, f: ((x: Nat) -> Nat), e: ==(a b)) : (==((f(a)) (f(b)))) =>
+  congruence(Nat Nat a b f e)`)
+
+compile(`add.swap = (a: Nat, b: Nat, c: Nat) : (==((+(a (+(b c)))) (+(b (+(a c)))))) =>
+  EQ.tran(Nat (+(a (+(b c)))) (+((+(a b)) c)) (+(b (+(a c))))
+    (add.assoc(a b c))
+    (EQ.tran(Nat (+((+(a b)) c)) (+((+(b a)) c)) (+(b (+(a c))))
+      (congn((+(a b)) (+(b a)) ((x:Nat):Nat => +(x c)) (add.comm(a b))))
+      (EQ.symm(Nat (+(b (+(a c)))) (+((+(b a)) c)) (add.assoc(b a c)))))))`)
+
+compile(`mul.succ = (n: Nat, m: Nat) : (==((+(n (mul(n m)))) (mul(n (S(m)))))) =>
+  match n
+    | => rfl(Nat Zero)
+    | p => (pm : Nat = (mul(p m))
+      congn((+(p (+(m pm)))) (+(m (mul(p (S(m)))))) S
+        (EQ.tran(Nat (+(p (+(m pm)))) (+(m (+(p pm)))) (+(m (mul(p (S(m))))))
+          (add.swap(p m pm))
+          (congn((+(p pm)) (mul(p (S(m)))) ((x:Nat):Nat => +(m x)) (mul.succ(p m))))))))`)
+
+compile(`mul.comm = (n:Nat, m: Nat) : (==((mul(n m)) (mul(m n)))) =>
+  match n
+    | => mul.0(m)
+    | p => EQ.tran(Nat (+(m (mul(p m)))) (+(m (mul(m p)))) (mul(m n))
+        (congn((mul(p m)) (mul(m p)) ((x:Nat):Nat => +(m x)) (mul.comm(p m)))) (mul.succ(m p)))`)
+
+
+compile(`addswap2 = (a: Nat, b: Nat, c: Nat, d: Nat)
+  : (==((+((+(a b)) (+(c d)))) (+((+(a c)) (+(b d)))))) =>
+  EQ.tran(Nat (+((+(a b)) (+(c d)))) (+(a (+(b (+(c d)))))) (+((+(a c)) (+(b d))))
+    (assoc.symm(a b (+(c d))))
+    (EQ.tran(Nat (+(a (+(b (+(c d)))))) (+(a (+(c (+(b d)))))) (+((+(a c)) (+(b d))))
+      (congn((+(b (+(c d)))) (+(c (+(b d)))) ((x:Nat):Nat => +(a x)) (add.swap(b c d))))
+      (add.assoc(a c (+(b d)))))))`)
+
+compile(`mul.dist = (a: Nat, b: Nat, c: Nat) : (==((mul(a (+(b c)))) (+((mul(a b)) (mul(a c)))))) =>
+  match a
+    | => rfl(Nat n0)
+    | p => EQ.tran(Nat
+        (+((+(b c)) (mul(p (+(b c))))))
+        (+((+(b c)) (+((mul(p b)) (mul(p c))))))
+        (+((+(b (mul(p b)))) (+(c (mul(p c))))))
+        (congn((mul(p (+(b c)))) (+((mul(p b)) (mul(p c))))
+          ((x:Nat):Nat => +((+(b c)) x)) (mul.dist(p b c))))
+        (addswap2(b c (mul(p b)) (mul(p c)))))`)
+
+compile(`AND = (A: Type, B: Type) : Type => | (a: A, b: B)`)
+
+compile(`_f = (T: Type, P: ((x:Type) -> Type), a: P(T)) : (P(T)) => a`)
+
+compile(`BadM = (m: Nat) : Type =>
+  match m | => NULL | q => Empty`)
+
+compile(`BadTy = (n: Nat, m: Nat) : Type =>
+  match n | => BadM(m) | p => Empty`)
+
+decline(`badRec = (n: Nat, m: Nat) : (BadTy(n m)) =>
+  match n
+    | => (match m | => Null | q => badRec((S(q)) q))
+    | p => (match p | => badRec(p (S(p))) | r => badRec(p (S(p))))`)
+
+decline(`_badbad : Empty = _badbad`)
+
+compile(`Fam = (n: Nat) : Type => NULL`)
+
+compile(`witness = (n: Nat) : (Fam(n)) => Null`)
+
+decline(`_bad_empty_rebind : Empty = witness(Zero)`)
+
+compile(`DeadBox = (T: Type) : Type => | (-x: T)`)
+compile(`LiveBox = (T: Type) : Type => | (x: T)`)
+compile(`mkDead = (-T: Type, -x: T) : (DeadBox(T)) => #0(x)`)
+decline(`castBox = (-T: Type, b: DeadBox(T)) : (LiveBox(T)) => b`)
+decline(`fromrfl : Empty = rfl`)
+decline(`fromrfl = (x:Nat) : Empty => rfl`)
+decline(`_false_arrow : Empty = (x: NULL) -> NULL`)
+decline(`_false_adt : Empty = |`)
+
+decline(`_boom = (n: Nat) : Empty => sorry`)
+compile(`_castNull = (x: NULL) : (| ()) => x`)
+decline(`_castBad = (x: NULL) : (| (x:Nat)) => x`)
+decline(`_badTF = (x: NULL) : Data => (x:NULL) -> NULL`)
+decline(`D : Data = | (f: ((z: NULL): Data => (x: D) -> Empty)(Null))`)
+
+
+
+decline(`packBad = (f: Kl) : (((Type: Type): Type => (| (f: Kl)))(Data)) => #0(f)`)
+
+decline(`unpackBad = (b: ((Type: Type): Type => (| (f: Kl)))(Data)) : Kl => match b | f => f`)
