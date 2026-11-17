@@ -1,0 +1,29 @@
+
+
+
+
+GROUP: Type = (| (
+  T: Type,
+  f: (x: T, y: T) -> T,
+  assoc: (x: T, y: T, z: T) -> EQ(T, f(f(x, y), z), f(x, f(y, z))),
+  e: T,
+  he: (x: T) -> EQ(T, f(x, e), x),
+  inv: (x:T) -> (| (y: T, h: EQ(T, f(x, y), e))
+)))
+
+
+G0 : GROUP = (#0(
+  NULL,
+  ((x: NULL, n: NULL) => Null),
+  (x: NULL, y: NULL, z: NULL) => rfl(NULL, Null),
+  Null,
+  (x: NULL) => (match x | => rfl(NULL, Null)),
+  (x: NULL) => #0(Null, match x |=> rfl(NULL, Null)),
+))
+
+
+
+
+
+
+

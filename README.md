@@ -1,19 +1,47 @@
-# minimal Dependent Type checker in ts
+# Tinyproof
 
-based on the bend2 language a minimal proof checker in ts.
+A small, inspectable dependent-type and proof checker in TypeScript, inspired by Bend/BendTT. The goal is to keep the implementation tiny enough to audit yourself.
 
-The goal is to create a TINY implementation of a sound dependent type checker so you can audit it yourself!
+## Usage
 
-at the moment the most interesting thing is [hoas.5.affinity.ts](hoas.5.affinity.ts) a minimal implementation of BendTT
+Install [Bun](https://bun.sh), then check a proof file:
 
-supporting proof checking with
- - hoas abstractions for functions arrows and ADTs
- - elaboration of related types in match
- - equality as a rfl AXIOM not a build in AST types!
- - 3 universes of types (-1: Erased, 0: Type, 1: Data)
- - structural recursion checking
+```sh
+./tinycheck example.proof
+```
 
-not supported yet:
- - comptime arguments
- - mutual recursion
- - macros
+The checker loads the definitions in `base.ts` before checking your file. It prints checked definitions and exits with a nonzero status on failure.
+
+For example, a `.proof` file can contain:
+
+```text
+identity = ( (x: Nat) : Nat => x )
+zero : Nat = ( identity(Zero) )
+```
+
+Run the acceptance and rejection tests with:
+
+```sh
+bun test.ts
+```
+
+## Repository
+
+- `compiler.ts` — core terms, reduction, equality, checking, and the surface-language compiler.
+- `base.ts` — shared definitions and proofs, including naturals and equality.
+- `tinycheck` — executable command-line checker.
+- `test.ts` — examples that must compile or be rejected.
+- `example.proof` — a minimal input file.
+- `docs/history.md` — history of the implementation experiments.
+
+## Features
+
+- Higher-order abstract syntax (HOAS) for binders.
+- Dependent functions and algebraic data types.
+- Dependent pattern matching.
+- `Type` and `Data` universes, with erased arguments marked `-`.
+- Affinity checks for live, non-`Data` values.
+- Structural recursion checking.
+- Equality and reflexivity expressed in the surface language rather than special AST nodes.
+
+Not supported yet: compile-time arguments, mutual recursion, and macros.

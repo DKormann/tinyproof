@@ -1,0 +1,22 @@
+#!/usr/bin/env bun
+import { argv, exit } from "node:process";
+import { readFile } from "node:fs/promises";
+import { compile, DEBUG } from "./compiler";
+import { base } from "./base";
+
+const args = argv.slice(2);
+if (args.length !== 1) {
+  console.error("Usage: ./tinycheck <file.proof>");
+  exit(1);
+}
+
+const [path] = args;
+try {
+  const source = await readFile(path, "utf8");
+  compile(base);
+  DEBUG.val = 1
+  compile(source);
+} catch (error) {
+  console.error(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+  exit(1);
+}

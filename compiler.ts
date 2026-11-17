@@ -1,0 +1,369 @@
+(Error as any).stackTraceLimit = Infinity
+
+export type F        = {names: string[], f: (...t: Term[]) => Term}
+type ArgT            = {name:string, live:boolean, f: (...x:Term[]) => Term } 
+
+export type Sign     = ArgT[]
+export type Type     = { ty: Type,  $: "Uni",       Quant : 0}
+export type Arrow    = { ty: Type,  $: "Arrow",     s: Sign }
+export type ADT      = { ty: Term,  $: "ADT",       variants: Sign[]}
+export type adt      = { ty: Term,  $: "adt",       tag: number, srcs: Term[] }
+export type match    = { ty: Term,  $: "match",     scr: Term, srcs: F[] }
+export type APP      = { ty: Term,  $: "APP",       fn: Term, args: Term[] }
+export type Lam      = { ty: Term,  $: "Lam",       fn: F}
+export type SYM      = { ty: Term,  $: "SYM",       name?: string, live: boolean }
+
+export type Term = Type | { ty: Type,  $: "Uni", Quant : 1} | Arrow | ADT | adt | match | APP | Lam | SYM
+
+export const Type = {$: "Uni", Quant: 0} as Type
+Type.ty = Type
+export const Data : Term = {$: "Uni", Quant: 1, ty: Type}
+
+let sorry = {} as Term
+
+export function raise(msg: string): never { throw new Error(msg) }
+
+function zip<T,S,U>(ts: T[], s: S[], f: (t: T, s: S, i: number)=>U): U[] {
+  if (ts.length !== s.length) throw new Error(`zip: arrays must have the same length, got ${ts.length} and ${s.length}`)
+  return ts.map((t, i) => f(t, s[i], i))
+}
+
+let fillSign = ( s: Sign): SYM[] => {
+  return s.reduce((acc: SYM[], c) => [...acc, {$:"SYM", name: c.name, live: c.live, ty: c.f(...acc)}  as SYM ], [] )
+}
+
+let fillArrow = (a: Arrow) => { 
+  let vs = fillSign(a.s)
+  return { args: vs.slice(0,-1), ret: vs[vs.length - 1].ty }
+}
+
+let book = new Map(Object.entries({Type, Data, sorry}))
+let names = new Map(Array.from(book.entries()).map(([k, v]) => [v, k]))
+
+export function fmt(t: Term, def?: boolean){
+  function pln(t:Term, def? : boolean):string{
+    if (names.has(t) && !def) return names.get(t)!
+    if (t.$ == "Uni") return t.Quant == 0 ? "Type" : "Data"
+    if (t.$ == "ADT") return t.variants.map(v=> `\n| (${ fillSign(v).map(v =>  (v.live ? "" : "-") + pln(v)+": "+ pln(v.ty)).join(', ')})`.replaceAll("\n", "\n  ")).join('')
+    if (t.$ == "adt") return `#${t.tag}(${t.srcs.map(x=> pln(x)).join(', ')})`
+    if (t.$ == "APP") return `${pln(t.fn)}(${ t.args.map(x => pln(x)).join(', ')})`
+    if (t.$ == "Arrow"){
+      let ff = fillArrow(t)
+      return `(${ff.args.map(v => `${pln(v)} : ${pln(v.ty)}`).join(', ')}) -> ${pln(ff.ret)}`
+    }
+    if (t.$ == "SYM") return t.name ?? "?"
+    if (t.$ == "match") return `match ${pln(t.scr)}:${t.srcs.map((f,i)=> `\n| ${f.names} => ${pln(f.f(...fillSign(asTag(t.scr.ty, "ADT").variants[i])))}`).join('').replaceAll("\n", "\n  ")}`
+    if (t.$ == "Lam") {
+      if (t.ty && t.ty.$ == "Arrow"){
+        let ars = fillArrow(t.ty)
+        return `(${ars.args.map(v => `${(v.live ? "" : "-") +pln(v)} : (${pln(v.ty)}`).join(', ')}):${pln(ars.ret)}) => ${pln(t.fn.f(...ars.args))}`
+      }
+      return `<|${t.fn.toString()}|>`
+    }
+    return t
+  }
+  return pln(t, def)
+}
+
+function run(t:Term): Term{
+  if (t.$ == "APP"){
+    let fn = run(t.fn)
+    if (fn.$ == "Lam") return run(fn.fn.f(...t.args))
+  }else if (t.$ == "match"){
+    let arg = run(t.scr)
+    if (arg.$ == "adt") return run(t.srcs[arg.tag].f(...arg.srcs))
+  }
+  return t
+}
+
+function checkEQ(a: Term, b: Term){
+  function checkEqSign(a:Sign, b:Sign){
+    if(a.length != b.length) raise(`Structural mismatch: ${a.length} vs ${b.length}`)
+    let vs = fillSign(a);
+    vs.map((v, i) => {
+      if (v.live != b[i].live) raise(`Live missmatch: ${v.name} vs ${b[i].name}`)
+      checkEQ(v.ty, b[i].f(...vs))
+    })
+  }
+
+  if (a.$ == "APP" && b.$ == "APP" && a.fn == b.fn && a.args.length == b.args.length) {
+    try {
+      checkEQ(a.fn, b.fn)
+      zip(a.args, b.args, (x, y) => checkEQ(x, y))
+      return }
+    catch (e) { if (!(e instanceof Error) || !e.message.startsWith("Structural mismatch:")) throw e }
+  }
+
+  [a,b] = [run(a), run(b)]
+  if (a == b) return
+
+  if (a.$ != b.$) {
+    raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`)
+  }
+  if (a.$ == "SYM") if (a!=b) raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`)
+  if (a.$ == "ADT"){
+    b = b as ADT
+    if (a.variants.length != b.variants.length) raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`)
+    zip(a.variants, b.variants, checkEqSign)
+  }
+  if (a.$ == "adt"){
+    if (a.tag != (b as adt).tag) raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`)
+    zip(a.srcs, (b as adt).srcs, (x, y)=> checkEQ(x, y))
+  }
+  if (a.$ == "APP"){
+    checkEQ(a.fn, (b as APP).fn)
+    zip(a.args, (b as APP).args, (x, y)=> checkEQ(x, y))
+  }
+
+  if (a.$ == "match"){
+    checkEQ(a.scr, (b as match).scr)
+    zip(a.srcs, (b as match).srcs, (x, y)=> {
+      let vs = x.names.map(name => ({ $: "SYM", name } as SYM))
+      if (x.f != y.f) checkEQ(x.f(...vs), y.f(...vs))
+    })
+  }
+
+  if (a.$ == "Arrow") checkEqSign(a.s, (b as Arrow).s)
+  if (a.$ == "Uni"){ if (a.Quant != (b as Type).Quant) raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`) }
+  if (a.$ == "Lam" || a.$ == "SYM") raise(`Structural mismatch: ${fmt(a)} vs ${fmt(b)}`)
+}
+
+function asTag <$ extends Term["$"]>(t: Term | undefined, tag: $) : Term & {$: $}{
+  if (!t) raise(`Expected tag ${tag}, got undefined`)
+  t = run(t)
+  if (t.$ != tag) raise(`Expected tag ${tag}, got ${t.$} in term ${fmt(t)}`)
+  return t as Term & {$: $}
+}
+
+let checked = new Set<Term> ([Type])
+type CallStack = { f: Term, args: Term[]} []
+
+function check(t:Term){
+
+  function checkSig(args: Term[], sig: Sign, live: boolean, cs: CallStack, used: SYM[]) : SYM[]{
+    if (args.length != sig.length) raise(`Arity mismatch: expected ${sig.length} arguments, got ${args.length}`)
+    zip(args, sig, (arg, slot,i)=>{
+      let nus = go(arg, cs, used, slot.f(...args.slice(0,i)), live && slot.live)
+      if (live && slot.live) used = nus
+    })
+    return used
+  }
+
+  function go(t:Term, cs: CallStack, used: SYM[], ty:Term | undefined, live : boolean) : SYM[]{
+
+    function raise(msg: string): never{ throw new Error(msg) }
+
+    // if (t == sorry) raise(`Sorry: ${fmt(ty ?? sorry)}`)
+
+    if (ty && t.ty) {
+      if (ty.$ == "Uni" && ty.Quant == 0 && t.ty.$ == "Uni" && t.ty.Quant == 1) {}
+      else checkEQ(t.ty, ty)
+    }
+    if (!t.$) raise(`Unexpected term with tag ${t}: ${fmt(t)}`)
+    if (checked.has(t)) return used
+    let type = t.ty
+    if (!type) { raise(`Cannot infer type for term ${fmt(t)}`) }
+
+    go(type, cs, used, Type, false)
+    if (!type.ty) raise(`Cannot infer type for term ${fmt(t)}`)
+
+    if (t.$ == "Uni"){
+      if (asTag(t.ty, "Uni").Quant != 0) raise(`Expected Uni Type, got ${fmt(t.ty)}`)
+    } else if (t.$ == "match"){
+      let arg = t.scr //asTag(t.scr, "SYM")
+      let T = asTag(arg.ty, "ADT")
+      let old : Term = {...arg}
+      let newuses: SYM[] = go(arg, cs, used, arg.ty, live)
+      zip(T.variants, t.srcs, (v, s, i)=>{
+        let vs = fillSign( v)
+        Object.assign(arg,{$:"adt", tag: i, ty: T, srcs: vs})
+        newuses.push(... go(s.f(...vs), cs, used, type, live).filter(x=>![...newuses, ...vs].includes(x)))
+      })
+      Object.assign(arg, old)
+      used = newuses
+    } else if (t.$ == "SYM"){
+      if (live && t.live) { if (type.ty != Data && used.includes(t)) raise(`Symbol ${fmt(t)} already used: ${fmt(t)} ty ty: ${fmt(type.ty)}`) }
+      else{ if (live) raise(`Symbol ${fmt(t)} is not live`) }
+      if (live) used = [...used, t]
+
+    } else if (t.$ == "adt"){
+      let vari = asTag(type, "ADT").variants[t.tag]
+      if (t.srcs.length != vari.length) raise(`invalid constructor args for ${fmt(type)}: [${t.srcs.map(x=>fmt(x))}]`)
+      return checkSig(t.srcs, vari, live, cs, used)
+
+    } else if (t.$ == "Lam"){
+      if (cs.find(x=>x.f == t)) raise(`Non well-founded lambda detected`)
+      let {args, ret} = fillArrow(asTag(t.ty, "Arrow"))
+      return go(t.fn.f(...args), [...cs, { f: t, args }], used, ret, true).filter(x=> !args.includes(x))
+
+    } else if (t.$ == "APP"){
+      let REC = cs.find(x=>x.f == t.fn)
+      let aro = asTag(t.fn.ty, "Arrow")
+      used = checkSig(t.args, aro.s.slice(0, -1), live, cs, used)
+      checkEQ(type, aro.s[aro.s.length - 1].f(...t.args))
+      if (REC){
+        let pairs = zip(REC.args, t.args, (x,y)=>[x,y])
+        let WF = pairs.findIndex(([A, a]) => (A.$ == "adt" && A.srcs.some(el => el == a)))
+        if (WF == -1 || pairs .slice(0,WF).some(([A, a]) => A!=a)) raise(`Non well-founded application detected: ${fmt(t)}`)
+      }
+      else return go(t.fn, cs, used, aro, live)
+
+    } else if (t.$ == "Arrow"){
+      if (asTag(type, "Uni").Quant == 1) raise(`Cannot construct Arrow of a universally quantified type`)
+      if (cs.every(x=>x.f != t)) fillSign(t.s).forEach(x=> go(x.ty, [...cs, {f: t, args: []}], used, Type, false))
+
+    } else if (t.$ == "ADT"){
+      if (cs.every(x=>x.f != t) && asTag(type, "Uni").Quant == 1)
+        for(let v of t.variants)
+          for (let s of fillSign(v)) go(s.ty, [...cs, {f: t, args: []}], used, Data, true)
+    }
+    return used
+  }
+  go(t, [], [], undefined, true)
+  checked.add(t)
+}
+
+type syntax = string | syntax []
+
+
+export let DEBUG = {val: 0}
+
+export function compile(s: string) {
+
+  const toks = `(${s})`.split("\n").map(l => l.trim()).filter(l => !l.startsWith("//"))
+    .join("\n").match(/->|=>|[():;,|+\-]|(?:=(?!>)|[^()\s:,|+\-=])+/g) ?? []
+
+  let idx = 0
+  function parse(): syntax {
+    if (toks[idx] !== "(") return toks[idx++]
+    idx++
+    const res: syntax[] = []
+    while (toks[idx] !== ")") {
+      if (idx >= toks.length) raise(`unexpected end of input while parsing list`)
+      res.push(parse())
+    }
+    idx++
+    return res
+  }
+  type Ctx = [string, Term][]
+
+  function asIden(tr: syntax): string{
+    if (typeof tr != "string") raise(`expected an identifier, but got: ${JSON.stringify(tr)}`)
+    return tr
+  }
+
+  function splitList(tr: syntax, sep: string): syntax[]{
+    let res: syntax[] = []
+    let idx = 0
+    while (idx < tr.length){
+      let nextIdx = tr.indexOf(sep, idx)
+      if (nextIdx == -1) nextIdx = tr.length
+      res.push(tr.slice(idx, nextIdx))
+      idx = nextIdx + 1
+    }
+    return res
+  }
+
+  function mkFunc(tr: syntax, ty: undefined |((...x:Term[])=>Term), args: string[], ctx: Ctx): (...x:Term[]) => Term{
+    return (...x) => asTerm(tr, ty?.(...x), [...ctx, ...x.map((v,i)=>["$"+args[i], v]) as Ctx])
+  }
+  
+  function asAnnot(tr: syntax, args: string[], ctx: Ctx): ArgT{
+    let live = tr[0]!= "-"
+    if (!live) tr = tr.slice(1)
+    if (tr[1] != ":") raise(`expected a ":" in annotation, but got: ${JSON.stringify(tr[1])}`)
+    let f = mkFunc(tr.slice(2), ()=>Type, args, ctx)
+    return {name:asIden(tr[0]), live, f}
+  }
+
+  function asLet(tr: syntax, ctx: Ctx, rec: boolean){
+    let obj = {} as Term
+    let n = "$" + asIden(tr[0])
+    let mkLet = (offs:number, type?: Term) =>{
+      Object.assign(obj, {...asTerm(tr[offs], type, rec?[...ctx,  [n, obj]]:ctx ), ...(type?{ ty: type} : {})})
+      return{ n, v: obj, r: tr.slice(1+offs) }
+    }
+    if (tr[1] == "=") return mkLet(2)
+    return mkLet(tr.indexOf("=")+1, asTerm(tr.slice(2, tr.indexOf("=")), Type, ctx))
+  }
+
+  function asTerm(tr: syntax, ty: Term | undefined, ctx: Ctx): Term{
+    function asSign(tr: syntax[]): Sign{
+      return tr.reduce((acc,x)=> acc.concat(asAnnot(x, acc.map(x=>x.name), ctx)) , [] as Sign)
+    }
+    if (typeof tr == "string") {
+      for (let i = ctx.length - 1; i >= 0; i--) if (ctx[i][0] === "$"+tr) return ctx[i][1]
+
+      raise(`identifier not found in context: ${tr}`)
+    }
+    if (tr[0] == "|" && tr.length == 1) return {$:"ADT", variants:[], ty: ty ?? Type}
+    if (tr.length == 1) return asTerm(tr[0], ty, ctx)
+    if (tr[0] == "match"){
+      if (!ty) raise(`expected type annotation for match expression`)
+      return {$:"match", scr: asTerm(tr[1], undefined, ctx), ty, srcs: splitList(tr.slice(3), "|").map(x=>{
+        if (!Array.isArray(x) || !x.includes("=>")) raise(`expected "=>" in match branch, but got: ${JSON.stringify(x)}`)
+        let names = x.slice(0, x.indexOf("=>")).map(x=>asIden(x))
+        return {names, f: mkFunc(x.slice(x.indexOf("=>")+1), ()=>ty, names, ctx)} as F
+      })}
+    }
+
+    if (typeof tr[0] == "string" && (tr[1] == "=" || tr[1] == ":")){
+      let dat = asLet(tr, ctx, false)
+      return asTerm(dat.r, ty, [...ctx, [dat.n, dat.v]])
+    }
+
+    if (tr.includes("=>")){
+      let args = asSign(splitList(tr[0], ","))
+      let names = args.map(x=>x.name)
+      let fnf = (f: (...xs:Term[]) => Term, R: ArgT) : Lam => ( {$:"Lam", fn: {names, f}, ty: {$:"Arrow", s: args.concat([R]), ty:Type}})
+      if (tr[1] == ":"){
+        let R = asAnnot(["_",":", tr.slice(2,tr.indexOf("=>"))],names, ctx)
+        return fnf(mkFunc(tr.slice(tr.indexOf("=>")+1), R.f, names, ctx), R)
+      }
+      let f = mkFunc(tr.slice(2), ty ? (asTag(ty, "Arrow").s[args.length].f) : undefined, names, ctx)
+      return fnf(f,  {name: "_", live: true, f:  (...xs: Term[])=> f(...xs).ty})
+    }
+
+    if (tr.includes("->")){
+      if (tr[1] != "->") raise(`expected "->" in function type, but got: ${JSON.stringify(tr[1])}`)
+      return {$:"Arrow", s:asSign(splitList(tr[0], ",").concat([["_", ":", tr.slice(2)]])), ty: Type}
+    }
+
+    if (tr[0] == "|") return {$:"ADT", variants:splitList(tr.slice(1), "|").map(x=>asSign(splitList(x[0], ","))), ty : ty ?? Type }
+
+
+    if (tr.length > 1 && Array.isArray(tr[tr.length - 1])){
+      let parseArgs = (sig: Sign) => splitList(tr[tr.length - 1], ",").reduce((acc,x,i)=> acc.concat(asTerm(x, sig[i].f(...acc), ctx)) , [] as Term[])
+      if (tr.length == 2 && typeof tr[0] == "string" && tr[0].startsWith("#")){
+        if (!ty) raise(`expected type annotation for data constructor: ${tr[0]}`)
+        let tag = parseInt((tr[0] as string).slice(1))
+        if (Number.isNaN(tag)) raise(`invalid data constructor tag: ${tr[0]}`)
+        return {$:"adt", tag, ty, srcs: parseArgs(asTag(ty, "ADT").variants[tag])}
+      }
+      let fn = asTerm(tr.slice(0,-1), undefined, ctx)
+      let sig = asTag(run(fn.ty), "Arrow").s
+      let args = parseArgs(sig)
+      return {$:"APP", fn, args, ty: sig[args.length].f(...args)}
+    }
+
+    raise(`unexpected syntactic form: ${JSON.stringify(tr)}`)
+  }
+
+  let tr = parse()
+  while(tr.length > 0) {
+    let dat = asLet(tr, [...book.entries()].map(([k,v])=>["$"+k,v]) as Ctx, true)
+    check(dat.v)
+    tr = dat.r
+    book.set(dat.n.slice(1), dat.v)
+    names.set(dat.v, dat.n.slice(1))
+
+    if (!dat.n.startsWith("_") && DEBUG.val) console.log("✓"+dat.n.slice(1), ":", fmt(dat.v.ty))
+  }
+
+}
+
+export function decline(s: string){
+  try{ compile(s)}
+  catch(e){return}
+  raise(`expected compilation to fail for: ${s}`)
+}
