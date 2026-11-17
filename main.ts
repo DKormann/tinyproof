@@ -229,7 +229,7 @@ function check(t:Term){
 
 type syntax = string | syntax []
 
-function compile(s: string) : Term{
+function compile(s: string) {
 
   const toks = `(${s})`.split("\n").map(l => l.trim()).filter(l => !l.startsWith("//"))
     .join("\n").match(/->|=>|[():;,|+\-]|(?:=(?!>)|[^()\s:,|+\-=])+/g) ?? []
@@ -278,12 +278,10 @@ function compile(s: string) : Term{
     return {name:asIden(tr[0]), live, f}
   }
 
-
-
-  function asLet(tr: syntax, ty: Term, ctx: Ctx): Term{
-    let mkLet = (offs:number, type?: Term) => asTerm(tr.slice(1+offs), ty, [...ctx, ["$"+asIden(tr[0]), asTerm(tr[offs], type, ctx)]])
+  function asLet(tr: syntax, ty: Term| undefined, ctx: Ctx){
+    let mkLet = (offs:number, type?: Term) =>({n: "$" + asIden(tr[0]), v: {...asTerm(tr[offs], type, ctx), ...(type?{ ty: type} : {})} as Term, r: tr.slice(1+offs) })
     if (tr[1] == "=") return mkLet(2)
-    return mkLet(4, asTerm(tr[2], Type, ctx))
+    return mkLet(tr.indexOf("=")+1, asTerm(tr.slice(2, tr.indexOf("=")), Type, ctx))
   }
 
   function asTerm(tr: syntax, ty: Term | undefined, ctx: Ctx): Term{
@@ -303,6 +301,11 @@ function compile(s: string) : Term{
         let names = x.slice(0, x.indexOf("=>")).map(x=>asIden(x))
         return {names, f: mkFunc(x.slice(x.indexOf("=>")+1), ()=>ty, names, ctx)} as F
       })}
+    }
+
+    if (typeof tr[0] == "string" && (tr[1] == "=" || tr[1] == ":")){
+      let dat = asLet(tr, ty, ctx)
+      return asTerm(dat.r, ty, [...ctx, [dat.n, dat.v]])
     }
 
     if (tr.includes("=>")){
@@ -341,21 +344,13 @@ function compile(s: string) : Term{
     raise(`unexpected syntactic form: ${JSON.stringify(tr)}`)
   }
 
-
   let body = {} as Term
   let name = asIden(tr[0])
   names.set(body, name)
-
-  let ctx  = [...book.entries(), [name, body]].map(([k,v])=>["$"+k,v]) as Ctx
-  let type: Term | undefined = undefined
-  if (!tr.includes("=")) raise(`expected a "=" after the type annotation, but got: ${JSON.stringify(tr[1])}`)
-  if (tr[1] == ":") type = asTerm(tr.slice(2, tr.indexOf("=")), Type, ctx)
-  let res = asTerm(tr.slice(tr.indexOf("=")+1), type, ctx)
-  Object.assign(body, {...res, ty:type ?? res.ty})
-  check(body)
-  if (!name.startsWith("_")) console.log(name, "=",fmt(body, true))
+  let dat = asLet(tr, undefined, [...book.entries(), [name, body]].map(([k,v])=>["$"+k,v]) as Ctx)
+  check(Object.assign(body, { ...dat.v, ty: dat.v.ty }))
+  if (!name.startsWith("_")) console.log(name, "=", fmt(body, true))
   book.set(name, body)
-  return body
 }
 
 function decline(s: string){
