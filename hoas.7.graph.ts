@@ -53,9 +53,10 @@ export function fmt(t: Term, def?: boolean){
       return `(${ff.args.map(v => `${pln(v)} : ${pln(v.ty)}`).join(', ')}) -> ${pln(ff.ret)}`
     }
     if (t.$ == "SYM") return t.name ?? "?"
-    if (t.$ == "match") return `match ${pln(t.scr)}:${t.srcs.map(f=>
-      `\n  | ${f.names} => ${pln(f.f(...f.names.map(name => ({ $: "SYM", name, live: true } as SYM))))}`
-    ).join('')}`
+    if (t.$ == "match") {
+      return `match ${pln(t.scr)}:${t.srcs.map((f,i)=> `\n | ${f.names} => ${pln(f.f(...fillSign(asTag(t.scr.ty, "ADT").variants[i])))}`
+      ).join('')}`
+    }
     if (t.$ == "Lam") {
       if (t.ty && t.ty.$ == "Arrow"){
         let ars = fillArrow(t.ty)
@@ -306,8 +307,8 @@ function compile(s: string) : Term{
       let names = args.map(x=>x.name)
       let fnf = (f: (...xs:Term[]) => Term, R: ArgT) : Lam => ( {$:"Lam", fn: {names, f}, ty: {$:"Arrow", s: args.concat([R]), ty:Type}})
       if (tr[1] == ":"){
-        let R = asAnnot(["_",":", tr[2]],names, ctx)
-        return fnf(mkFunc(tr.slice(4), R.f, names, ctx), R)
+        let R = asAnnot(["_",":", tr.slice(2,tr.indexOf("=>"))],names, ctx)
+        return fnf(mkFunc(tr.slice(tr.indexOf("=>")+1), R.f, names, ctx), R)
       }
       let f = mkFunc(tr.slice(2), undefined, names, ctx)
       return fnf(f, {name: "_", live: true, f: (...xs: Term[])=> f(...xs).ty})
@@ -457,7 +458,7 @@ decline(`_bad_apply_predecessor = (n: Nat, P:NPred, h: ((x: Nat) -> P(x))) : (P(
 compile(`isZ = (n: Nat) : Type => EQ(Nat, Zero, n)`)
 compile("_eater_is_zero_type = (n: Nat) : Type => isZ((eater(n)))")
 
-compile("eater_n_eq = (n: Nat) : (EQ(Nat, (eater(n)), (eater((S(n)))))) => rfl(Nat, (eater(n)))")
+compile("eater_n_eq = (n: Nat) : EQ(Nat, eater(n), eater(S(n))) => rfl(Nat, eater(n))")
 
 decline("_bad_eater_proof = (n: Nat) : (EQ(Nat, (eater(n)), (eater((S(n)))))) => rfl(Nat, (pred(n)))")
 decline("_bad_zero_one_proof = (n: Nat) : (EQ(Nat, Zero, n1)) => rfl(Nat, Zero)")
@@ -513,8 +514,7 @@ compile(`Kl_apply = (xt: Kl, yt: Kl) : Empty => xt(yt)`)
 decline(`_bad_Kl_apply_dead = (xt: Kl, -yt: Kl) : Empty => xt(yt)`)
 
 decline(`emptyLoop = (): Empty => emptyLoop()`)
-compile(`EQ.symm = (-T: Type, a: T, b: T, e: EQ(T, a, b)) : (EQ(T, b, a)) =>
-  e(((x: T) : Type => EQ(T, x, a)), (rfl(T, a)))`)
+compile(`EQ.symm = (-T: Type, a: T, b: T, e: EQ(T, a, b)) : (EQ(T, b, a)) => e(((x: T) => EQ(T, x, a)), (rfl(T, a)))`)
 
 
 
@@ -617,68 +617,39 @@ compile(`mul.dist = (a: Nat, b: Nat, c: Nat) : (==((mul(a, (add(b, c)))), (add((
         addswap2(b,c, mul(p,b), mul(p,c))(P,h)
   `)
 
-
-
 compile(`Not = (A: Type) => ((x:A) -> Empty)`)
 compile(`ExF = (e: Empty, T: Type) : T => match e`)
-
 compile(`NEQ = (A: Type, x: A, y: A) => Not(EQ(A, x, y))`)
-
-compile(`DEC = (P: Type) => | (p: P) | (n: Not(P)) `)
+compile(`DEC = (P: Type) => (| (p: P) | (n: Not(P)) )`)
 compile(`DEC.EQ = (A: Type, x: A, y: A) => DEC(EQ(A, x, y))`)
 
-
-
-compile(`Nat.NEQ.0 = (n:Nat ) : ( NEQ(Nat, Zero, S(n))) =>
+compile(`Nat.NEQ.0 = (n:Nat ) : NEQ(Nat, Zero, S(n)) =>
   P = ((x: Nat): Type => match x | => NULL | => Empty )
   ((e: ==(Zero, S(n))) => e(P, Null))
 )`)
 
-
-
-compile(`Nat.dec.step = (n: Nat, m: Nat, d: DEC.EQ(Nat, n, m) ) : (DEC.EQ(Nat, S(n), S(m))) =>
+compile(`Nat.dec.step = (n: Nat, m: Nat, d: DEC.EQ(Nat, n, m) ) : DEC.EQ(Nat, S(n), S(m)) =>
   match d
     | e =>
       P = ((x:Nat) => EQ(Nat, S(n), S(x)))
       #0(e( P, rfl(Nat, S(n))))
-    | ne =>
-      #1( (e: EQ(Nat, S(n), S(m))) : Empty =>(
-        h : (EQ(Nat, n, m)) = (congn(S(n), S(m), pred, e ))
-        (ne(h))
-      ))
+    | ne => #1( (e: EQ(Nat, S(n), S(m))) =>( (ne( congn(S(n), S(m), pred, e )) ) )) `)
 
-`)
-
-
-compile(`Nat.dec.eq = (n: Nat, m: Nat) : (|(e: ==(n,m)) | (n: NEQ(Nat,n,m))) =>
-  match n
+compile(`Nat.dec.eq = (n: Nat, m: Nat) : DEC(EQ(Nat, n, m)) =>
+    match n
     | => ( match m
       | => #0(rfl(Nat, Zero))
-      | q => #1(Nat.NEQ.0(q))
-    )
-    | p => (
-      match m
-        | => #1((e: EQ(Nat,n,m)) :Empty => Nat.NEQ.0(p)( EQ.symm(Nat,n,m,e) ) )
-        | q => (
-          match (Nat.dec.eq(p,q))
-            | e => #0( sorry  )
-            | n => sorry
-      )
-    )
-  `)
-
+      | q => #1(Nat.NEQ.0(q)) )
+    | p => ( match m
+        | => #1((e: EQ(Nat,n,m)) => Nat.NEQ.0(p)( EQ.symm(Nat,n,m,e) ) )
+        | q => Nat.dec.step(p,q,Nat.dec.eq(p,q)) )`)
 
 compile(`AND = (A: Type, B: Type) : Type => | (a: A, b: B)`)
+compile(`_f = (T: Type, P: (x:Type) -> Type, a: P(T)) : P(T)=> a`)
+compile(`BadM = (m: Nat) : Type => match m | => NULL | q => Empty`)
+compile(`BadTy = (n: Nat, m: Nat) : Type => match n | => BadM(m) | p => Empty`)
 
-compile(`_f = (T: Type, P: ((x:Type) -> Type), a: P(T)) : (P(T)) => a`)
-
-compile(`BadM = (m: Nat) : Type =>
-  match m | => NULL | q => Empty`)
-
-compile(`BadTy = (n: Nat, m: Nat) : Type =>
-  match n | => BadM(m) | p => Empty`)
-
-decline(`badRec = (n: Nat, m: Nat) : (BadTy(n, m)) =>
+decline(`badRec = (n: Nat, m: Nat) : BadTy(n, m) =>
   match n
     | => (match m | => Null | q => badRec((S(q)), q))
     | p => (match p | => badRec(p, (S(p))) | r => badRec(p, (S(p))))`)
@@ -704,8 +675,8 @@ decline(`_false_arrow : Empty = (x: NULL) -> NULL`)
 decline(`_false_adt : Empty = |`)
 
 decline(`_boom = (n: Nat) : Empty => sorry`)
-compile(`_castNull = (x: NULL) : (| ()) => x`)
-decline(`_castBad = (x: NULL) : (| (x:Nat)) => x`)
+compile(`_castNull = (x: NULL) : | () => x`)
+decline(`_castBad = (x: NULL) : | (x:Nat) => x`)
 decline(`_badTF = (x: NULL) : Data => (x:NULL) -> NULL`)
 decline(`D : Data = | (f: ((z: NULL): Data => (x: D) -> Empty)(Null))`)
 
