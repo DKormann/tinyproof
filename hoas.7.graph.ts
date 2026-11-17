@@ -53,10 +53,9 @@ export function fmt(t: Term, def?: boolean){
       return `(${ff.args.map(v => `${pln(v)} : ${pln(v.ty)}`).join(', ')}) -> ${pln(ff.ret)}`
     }
     if (t.$ == "SYM") return t.name ?? "?"
-    if (t.$ == "match") return `match ${pln(t.scr)}:${t.srcs.map(f=> {
-      let s = f .names.map(name => ({ $: "SYM", name, live: true } as SYM))
-      return `\n  | ${s.map(v => pln(v)).join(', ')} => ${pln(f.f(...s))}`
-    }).join('')}`
+    if (t.$ == "match") return `match ${pln(t.scr)}:${t.srcs.map(f=>
+      `\n  | ${f.names} => ${pln(f.f(...f.names.map(name => ({ $: "SYM", name, live: true } as SYM))))}`
+    ).join('')}`
     if (t.$ == "Lam") {
       if (t.ty && t.ty.$ == "Arrow"){
         let ars = fillArrow(t.ty)
@@ -174,9 +173,9 @@ function check(t:Term){
     if (t.$ == "Uni"){
       if (asTag(t.ty, "Uni").Quant != 0) raise(`Expected Uni Type, got ${fmt(t.ty)}`)
     } else if (t.$ == "match"){
-      let arg = asTag(t.scr, "SYM")
+      let arg = t.scr //asTag(t.scr, "SYM")
       let T = asTag(arg.ty, "ADT")
-      let old : SYM = {...arg}
+      let old : Term = {...arg}
       let newuses: SYM[] = go(arg, cs, used, arg.ty, live)
       zip(T.variants, t.srcs, (v, s, i)=>{
         let vs = fillSign( v)
@@ -294,7 +293,7 @@ function compile(s: string) : Term{
       return {$:"match", scr: asTerm(tr[1], undefined, ctx), ty, srcs: splitList(tr.slice(3), "|").map(x=>{
         if (!Array.isArray(x) || !x.includes("=>")) raise(`expected "=>" in match branch, but got: ${JSON.stringify(x)}`)
         let names = x.slice(0, x.indexOf("=>")).map(x=>asIden(x))
-        return {names, f: mkFunc(x.slice(x.indexOf("=>")+1), undefined, names, ctx)} as F
+        return {names, f: mkFunc(x.slice(x.indexOf("=>")+1), ()=>ty, names, ctx)} as F
       })}
     }
 
@@ -330,6 +329,7 @@ function compile(s: string) : Term{
         return {$:"adt", tag, ty, srcs: parseArgs(asTag(ty, "ADT").variants[tag])}
       }
       let fn = asTerm(tr.slice(0,-1), undefined, ctx)
+
       let sig = asTag(run(fn.ty), "Arrow").s
       let args = parseArgs(sig)
       return {$:"APP", fn, args, ty: sig[args.length].f(...args)}
@@ -352,7 +352,7 @@ function compile(s: string) : Term{
   Object.assign(body, {...res, ty:type ?? res.ty})
 
   check(body)
-  if (!name.startsWith("_")) console.log(name,":", fmt(body.ty), "=",fmt(body, true))
+  if (!name.startsWith("_")) console.log(name, "=",fmt(body, true))
   book.set(name, body)
   return body
 }
@@ -531,10 +531,8 @@ compile(`add = (n: Nat, m: Nat) : Nat => match n | => m | p => S((add(p, m)))`)
 decline(`_add_missing_comma = (n: Nat, m: Nat) : Nat => add(n m)`)
 compile(`== = (n: Nat, m: Nat) : Type => EQ(Nat, n, m)`)
 
-compile(`congruence = (
-  T: Type, U: Type, a: T, b: T,
-  f: ((x:T) -> U), e: EQ(T, a, b)
-) : (EQ(U, (f(a)), (f(b)))) =>
+compile(`congruence = ( T: Type, U: Type, a: T, b: T, f: ((x:T) -> U), e: EQ(T, a, b))
+  : (EQ(U, (f(a)), (f(b)))) =>
   e(((x: T) : Type => EQ(U, (f(a)), (f(x)))), (rfl(U, (f(a)))))`)
 
 compile(`add.succ.0 = (n: Nat, k: Nat) : (==((add((S(n)), k)), (S((add(n, k)))))) => rfl(Nat, (add((S(n)), k)))`)
@@ -620,6 +618,56 @@ compile(`mul.dist = (a: Nat, b: Nat, c: Nat) : (==((mul(a, (add(b, c)))), (add((
   `)
 
 
+
+compile(`Not = (A: Type) => ((x:A) -> Empty)`)
+compile(`ExF = (e: Empty, T: Type) : T => match e`)
+
+compile(`NEQ = (A: Type, x: A, y: A) => Not(EQ(A, x, y))`)
+
+compile(`DEC = (P: Type) => | (p: P) | (n: Not(P)) `)
+compile(`DEC.EQ = (A: Type, x: A, y: A) => DEC(EQ(A, x, y))`)
+
+
+
+compile(`Nat.NEQ.0 = (n:Nat ) : ( NEQ(Nat, Zero, S(n))) =>
+  P = ((x: Nat): Type => match x | => NULL | => Empty )
+  ((e: ==(Zero, S(n))) => e(P, Null))
+)`)
+
+
+
+compile(`Nat.dec.step = (n: Nat, m: Nat, d: DEC.EQ(Nat, n, m) ) : (DEC.EQ(Nat, S(n), S(m))) =>
+  match d
+    | e =>
+      P = ((x:Nat) => EQ(Nat, S(n), S(x)))
+      #0(e( P, rfl(Nat, S(n))))
+    | ne =>
+      #1( (e: EQ(Nat, S(n), S(m))) : Empty =>(
+        h : (EQ(Nat, n, m)) = (congn(S(n), S(m), pred, e ))
+        (ne(h))
+      ))
+
+`)
+
+
+compile(`Nat.dec.eq = (n: Nat, m: Nat) : (|(e: ==(n,m)) | (n: NEQ(Nat,n,m))) =>
+  match n
+    | => ( match m
+      | => #0(rfl(Nat, Zero))
+      | q => #1(Nat.NEQ.0(q))
+    )
+    | p => (
+      match m
+        | => #1((e: EQ(Nat,n,m)) :Empty => Nat.NEQ.0(p)( EQ.symm(Nat,n,m,e) ) )
+        | q => (
+          match (Nat.dec.eq(p,q))
+            | e => #0( sorry  )
+            | n => sorry
+      )
+    )
+  `)
+
+
 compile(`AND = (A: Type, B: Type) : Type => | (a: A, b: B)`)
 
 compile(`_f = (T: Type, P: ((x:Type) -> Type), a: P(T)) : (P(T)) => a`)
@@ -638,6 +686,9 @@ decline(`badRec = (n: Nat, m: Nat) : (BadTy(n, m)) =>
 decline(`_badbad : Empty = _badbad`)
 
 compile(`Fam = (n: Nat) : Type => NULL`)
+
+compile(`_weakening = (A:Type, B: Type, x: AND(A,B)): B => match x | a b => b`)
+compile(`_weakening = (A:Type, B: Type, x: |(_:A, _:B) ): B => match x | a b => b`)
 
 compile(`witness = (n: Nat) : (Fam(n)) => Null`)
 
